@@ -1,0 +1,14 @@
+{
+  "name": "english30",
+  "version": "1.0.0",
+  "private": true,
+  "description": "English 30 — полчаса английского в день (A1–A2), PWA на GitHub Pages",
+  "scripts": {
+    "icons": "python tools/make_icons.py",
+    "build": "python build.py",
+    "deploy": "npm run build && gh-pages -d dist -t"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0"
+  }
+}
