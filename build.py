@@ -12,7 +12,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, 'src')
 PUBLIC = os.path.join(ROOT, 'public')
 DIST = os.path.join(ROOT, 'dist')
-BASE = '/english30/'   # подпапка сайта на GitHub Pages: start_url и scope манифеста
+BASE = '/en30/'   # подпапка сайта на GitHub Pages: start_url и scope манифеста (репозиторий drunkmay79/en30)
 JS = ['data/grammar1.js', 'data/grammar2.js', 'data/grammar3.js',
       'data/vocab1.js', 'data/vocab2.js', 'data/chunks.js',
       'core.js', 'exercises.js', 'app.js']
