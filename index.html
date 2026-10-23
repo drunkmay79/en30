@@ -226,7 +226,7 @@ button{font:inherit;color:inherit}
 <div id="app"></div>
 <div id="toast" class="toast" hidden></div>
 <script>
-window.APP_VERSION = '2026-10-23 12:21';
+window.APP_VERSION = '2026-10-23 12:33';
 /* PWA: регистрируем service worker только по http(s); при смене контроллера
    (новая версия вступила в силу) перезагружаем страницу один раз.
    При самом первом визите контроллера ещё нет — не перезагружаем. */
@@ -2870,6 +2870,34 @@ Ex.types.read=function(it,w,ctx){ const tx=TEXTS.find(t=>t.id===it.id); w.append
 
 SRS.dueCountTomorrow=function(){ const t=Day.idx()+1; return Object.keys(P.cards).filter(k=>P.cards[k].s>0&&P.cards[k].due<=t).length; };
 
+/* ---------- PWA: кнопка установки и диагностика ----------
+   Chrome присылает beforeinstallprompt, когда сайт можно установить; запоминаем событие
+   и показываем свою кнопку. В установленном приложении display-mode = standalone. */
+window.__bip=null;
+window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); window.__bip=e; if(window.PWA) PWA.refresh(); });
+window.addEventListener('appinstalled',function(){ window.__bip=null; if(window.U) U.toast('Установлено — запускай с иконки на главном экране'); if(window.PWA) PWA.refresh(); });
+const PWA={
+  standalone:()=>window.matchMedia('(display-mode: standalone)').matches||window.matchMedia('(display-mode: fullscreen)').matches||window.navigator.standalone===true,
+  web:()=>location.protocol.indexOf('http')===0,
+  ios:()=>/iPhone|iPad|iPod/i.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1),
+  hint(){ return PWA.ios()?'Safari → кнопка «Поделиться» → «На экран „Домой“». Потом запускай с иконки.':'В Chrome: меню ⋮ → «Установить приложение» (или «Добавить на главный экран» → «Установить»). Потом запускай с иконки на главном экране, а не из Chrome.'; },
+  card(){ if(!PWA.web()||PWA.standalone()) return null; const c=U.h('div',{class:'card tight',id:'installCard'});
+    if(window.__bip){ const b=U.h('button',{class:'btn pri big',type:'button'},'📲 Установить как приложение'); b.onclick=()=>{ const e=window.__bip; if(!e) return; e.prompt(); if(e.userChoice) e.userChoice.then(()=>{ window.__bip=null; PWA.refresh(); }).catch(()=>{}); }; c.appendChild(b);
+      c.appendChild(U.h('p',{class:'muted',style:'margin:8px 0 0'},'После установки открывай с иконки на главном экране: на весь экран и без интернета.')); }
+    else { c.appendChild(U.h('div',null,U.h('b',null,'Сейчас это вкладка браузера.'))); c.appendChild(U.h('p',{class:'muted',style:'margin:6px 0 0'},PWA.hint())); }
+    return c; },
+  refresh(){ const old=document.getElementById('installCard'); if(!old) return; const n=PWA.card(); if(n) old.replaceWith(n); else old.remove(); },
+  statusCard(){ const c=U.h('div',{class:'card'}); c.appendChild(U.h('h3',{style:'margin-top:0'},'Приложение на устройстве'));
+    const row=(k,v)=>U.h('div',{class:'row between nowrap',style:'margin:6px 0;gap:12px'},U.h('div',{class:'muted'},k),U.h('div',{style:'text-align:right'},v));
+    c.appendChild(row('Режим',PWA.standalone()?'установленное приложение ✅':'вкладка браузера'));
+    c.appendChild(row('Откуда открыто',PWA.web()?location.host+location.pathname:'локальный файл'));
+    c.appendChild(row('Chrome предлагает установку',window.__bip?'да ✅':(PWA.standalone()?'уже установлено':'нет')));
+    const swRow=row('Офлайн-кеш (service worker)','проверяю…'); c.appendChild(swRow);
+    if('serviceWorker' in navigator&&PWA.web()) navigator.serviceWorker.getRegistration().then(r=>{ swRow.lastChild.textContent=r&&r.active?'работает ✅':'не установлен'; }).catch(()=>{ swRow.lastChild.textContent='недоступен'; }); else swRow.lastChild.textContent=PWA.web()?'не поддерживается':'не нужен для файла';
+    if(!PWA.standalone()&&PWA.web()){ const ic=PWA.card(); if(ic){ ic.className=''; ic.style.marginTop='10px'; c.appendChild(ic); } }
+    return c; }
+};
+
 const App = {
   root:null, screen:'home', arg:null, _enter:null,
   init(){
@@ -2932,6 +2960,7 @@ Screens.home=function(r){
   const btn=U.h('button',{class:'btn pri big',type:'button',style:'margin-top:12px'},resumable?'Продолжить занятие ▶':(t.done?'Ещё одно занятие ▶':'Начать занятие ▶')); btn.onclick=()=>Session.startDaily(!resumable); card.appendChild(btn); App._enter=btn;
   if(resumable) card.appendChild(U.h('div',{class:'muted',style:'margin-top:8px'},'Блок '+(s.bi+1)+' из '+s.blocks.length+': '+s.blocks[s.bi].icon+' '+s.blocks[s.bi].title));
   r.appendChild(card);
+  const inst=PWA.card(); if(inst) r.appendChild(inst);
   const unit=Planner.currentUnit(); const theme=Planner.currentTheme(); const due=SRS.dueCount(); const known=Planner.knownWords().length; const sessions=Object.values(P.days).filter(d=>d.done).length;
   const plan=U.h('div',{class:'card plan'}); plan.appendChild(U.h('h3',{style:'margin-top:0'},'План на сегодня · '+goal+' минут'));
   const steps=[]; if(due||known) steps.push(['🔁','Повторение',due?due+' '+U.plural(due,'карточка','карточки','карточек')+' по памяти':'разминка на знакомых словах',5]);
@@ -3086,6 +3115,7 @@ Screens.more=function(r){ r.appendChild(U.h('h1',null,'⚙️ Ещё'));
   const cp=U.h('button',{class:'btn soft',type:'button'},'📋 Скопировать код'); cp.onclick=()=>{ const code=btoa(unescape(encodeURIComponent(Prof.exportJSON()))); codeBox.hidden=false; codeBox.value=code; const show=()=>{ codeBox.focus(); codeBox.select(); U.toast('Код показан ниже — выдели и скопируй'); }; if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(()=>U.toast('Код скопирован ('+code.length+' символов)')).catch(show); else show(); };
   const ps=U.h('button',{class:'btn soft',type:'button'},'📥 Вставить код'); let pasteMode=false; ps.onclick=()=>{ if(!pasteMode){ pasteMode=true; codeBox.hidden=false; codeBox.value=''; ps.textContent='✅ Загрузить код'; Ex.focus(codeBox); return; } const code=codeBox.value.trim(); if(!code){ U.toast('Вставь код в поле ниже'); return; } try{ Prof.importJSON(decodeURIComponent(escape(atob(code)))); Theme.apply(); U.toast('Профиль загружен'); App.go('home'); }catch(e){ U.toast('Код не распознан'); } };
   dc.appendChild(U.h('div',{class:'grid2'},dl,ul,cp,ps)); dc.appendChild(codeBox); dc.appendChild(up); r.appendChild(dc);
+  r.appendChild(PWA.statusCard());
   const ab=U.h('div',{class:'card'}); ab.appendChild(U.h('h3',{style:'margin-top:0'},'Как устроено обучение')); ab.appendChild(U.h('div',{class:'rule',html:App.ABOUT})); r.appendChild(ab);
   r.appendChild(U.h('p',{class:'muted center'},'English 30 · сборка '+window.APP_VERSION+' · прогресс хранится в этом браузере')); };
 
