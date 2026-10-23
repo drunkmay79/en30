@@ -1,0 +1,6 @@
+node_modules/
+dist/
+artifact.html
+work/
+.claude/
+__pycache__/
