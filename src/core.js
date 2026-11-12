@@ -198,7 +198,7 @@ const Planner = {
   unitProg(id){ const u=P.units[id]; if(!u||!u.h||!u.h.length) return 0; const h=u.h.slice(-20); const acc=h.reduce((a,b)=>a+b,0)/h.length; return Math.round(acc*100*Math.min(1,h.length/(acc>=0.9?10:14))); },
   GRAM_TYPES:['choice','gap','build','tr','err'],
   /* тема «закрыта» при 75 % и открывается заново, только если точность упала ниже 50 % */
-  unitDone(id){ const u=P.units[id]; if(!u) return false; const p=Planner.unitProg(id); if(p>=75) u.done=true; if(u.done&&p<50) u.done=false; return !!u.done; },
+  unitDone(id){ const u=P.units[id]; if(!u) return false; const p=Planner.unitProg(id); if(p>=75&&!u.done){ u.done=true; u.doneAt=Day.idx(); } if(u.done&&p<50) u.done=false; return !!u.done; },
   currentUnit(){ for(const u of GRAMMAR){ if(!Planner.unitDone(u.id)) return u; } return GRAMMAR[GRAMMAR.length-1]; },
   unitsForReview(n, excl){ const seen=GRAMMAR.filter(u=>u.id!==excl&&P.units[u.id]&&P.units[u.id].h&&P.units[u.id].h.length);
     seen.sort((a,b)=>(Planner.unitProg(a.id)-Planner.unitProg(b.id))||((P.units[a.id].last||0)-(P.units[b.id].last||0))); return seen.slice(0,n); },
@@ -342,20 +342,22 @@ const Planner = {
     const R=hasKnown?Math.max(150*f,Math.min(480*f,due.length*22)):0;
     const cut=Math.max(0,Math.ceil((due.length-25)/10));
     const unit=Planner.currentUnit();
+    let chk=(typeof Auto!=='undefined'&&Auto.weeklyDue())?Report.csItems():null; if(chk&&chk.length<4) chk=null;
+    const tgt=target-(chk?Planner.estSum(chk):0);
     const make=gBudget=>{ const used={keys:new Set(),ex:new Set(),due:new Set(due)};
       const g={id:'grammar',title:'Грамматика',icon:'🧱',unit:unit.id,items:Planner.grammarBlock(unit,lvl,gBudget,used)};
-      const v=Planner.vocabFit(lvl,f,used,cut,420*f);
+      const v=Planner.vocabFit(lvl,f,used,cut,(chk?300:420)*f);
       const sp=Planner.spellBlock(lvl,f,used,unit,readDay);
       let rd=null; if(readDay){ const tx=TEXTS.slice().sort((a,b)=>((P.read[a.id]||0)-(P.read[b.id]||0)))[0]; rd={id:'read',title:'Чтение: '+tx.title,icon:'📖',items:[{t:'read',id:tx.id}]}; }
-      const sk=Planner.speakBlock(lvl,f,used,unit,f>=0.6&&sessionsBefore%2===0);
+      const sk=Planner.speakBlock(lvl,f,used,unit,f>=0.6&&sessionsBefore%2===0&&!chk);
       return {used,g,v,sp,rd,sk}; };
     /* два прохода: первый меряет блоки слов, письма и речи, второй отдаёт грамматике остаток времени */
     let parts=make(540*f);
     const fixed=[parts.v,parts.sp,parts.rd,parts.sk].filter(Boolean).reduce((a,b)=>a+Planner.estSum(b.items),0);
-    parts=make(Math.round(Math.max(300*f,Math.min(600*f,target-R-fixed))));
+    parts=make(Math.round(Math.max(300*f,Math.min(600*f,tgt-R-fixed))));
     const {used,g,v,sp,rd,sk}=parts; const others=[g,v,sp,rd,sk].filter(Boolean);
     const lessonExtra=g.items[0]&&g.items[0].t==='lesson'?Math.max(0,Planner.est(g.items[0])-90):0;
-    const rest=target-others.reduce((a,b)=>a+Planner.estSum(b.items),0)+lessonExtra;
+    const rest=tgt-others.reduce((a,b)=>a+Planner.estSum(b.items),0)+lessonExtra;
     const budget=hasKnown?Math.max(R,Math.min(480*f,rest)):0; const rv=[]; let sum=0;
     const revItem=k=>{ let it=Planner.itemFor(k,lvl); if(!it) return null; const sk1=Planner.sentKey(it); if(sk1&&used.ex.has(sk1)) it=k.startsWith('w:')?Planner.wordEx(k,'wtype',lvl):Planner.chunkEx(k,'cchoice'); const sk2=Planner.sentKey(it); if(sk2) used.ex.add(sk2); return it; };
     for(const k of used.due){ if(sum>=budget) break; if(used.keys.has(k)) continue; const it=revItem(k); if(!it) continue; rv.push(it); used.keys.add(k); sum+=Planner.est(it); }
@@ -363,6 +365,7 @@ const Planner = {
     const warm=Content.wordList.filter(w=>P.cards[w.key]&&P.cards[w.key].s>=1&&!used.keys.has(w.key)).sort((a,b)=>(P.cards[a.key].last||0)-(P.cards[b.key].last||0));
     for(const w of warm){ if(sum>=budget) break; const it=revItem(w.key); if(!it) continue; rv.push(it); used.keys.add(w.key); sum+=Planner.est(it); }
     const blocks=[]; if(rv.length) blocks.push({id:'review',title:'Повторение',icon:'🔁',items:U.shuffle(rv)}); blocks.push(...others);
+    if(chk) blocks.push({id:'check',title:'Проверка для папы',icon:'🎯',items:chk,noRequeue:true});
     blocks.forEach(b=>{ b.items=b.items.filter(Boolean); b.i=0; b.spent=0; b.done=false; b.n=0; b.ok=0; b.rq=0; });
     const est=blocks.reduce((a,b)=>a+Planner.estSum(b.items),0);
     return {v:2,date:Day.key(),bi:0,blocks,created:Date.now(),finished:false,n:0,ok:0,xp:0,free:false,lvl,est,due:due.length};

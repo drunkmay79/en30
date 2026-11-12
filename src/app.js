@@ -36,17 +36,19 @@ const App = {
     App.root=document.getElementById('app'); Content.init(); Speech.init();
     window.addEventListener('hashchange', App.route);
     document.addEventListener('keydown', e=>{ if(e.key!=='Enter'||!App._enter) return; const a=document.activeElement; if(a&&['INPUT','TEXTAREA','SELECT','BUTTON','A'].includes(a.tagName)) return; e.preventDefault(); App._enter.click(); });
+    if(location.hash.indexOf('#r=')===0){ Prof.boot(); App.route(); return; }
     if(!Prof.boot()){ location.hash='#onboard'; App.route(); return; }
     Theme.apply(); Prof.recalcStreak(); Prof.save();
     if(!location.hash||location.hash==='#onboard') location.hash='#home';
     App.route();
   },
   go(name,arg){ const h='#'+name+(arg?'/'+arg:''); if(location.hash===h) App.route(); else location.hash=h; },
-  route(){ const h=(location.hash||'#home').slice(1).split('/'); const name=h[0]||'home', arg=h.slice(1).join('/')||null;
+  route(){ if(location.hash.indexOf('#r=')===0){ App.screen='report'; App.arg=location.hash.slice(3); App.render(); return; }
+    const h=(location.hash||'#home').slice(1).split('/'); const name=h[0]||'home', arg=h.slice(1).join('/')||null;
     if(!P&&name!=='onboard'){ location.hash='#onboard'; return; } App.screen=name; App.arg=arg; App.render(); },
   render(){ Speech.stop(); Session.stopTimer(); window.scrollTo(0,0); App._enter=null; const r=App.root; r.innerHTML='';
     const fn=Screens[App.screen]||Screens.home; fn(r,App.arg);
-    if(App.screen!=='session'&&App.screen!=='onboard') r.appendChild(App.nav()); },
+    if(!['session','onboard','report','check'].includes(App.screen)) r.appendChild(App.nav()); },
   nav(){ const tabs=[['home','🏠','Сегодня'],['practice','🎯','Практика'],['stats','📈','Прогресс'],['more','⚙️','Ещё']]; const sub=['grammar','unit','vocab','theme','dialogs','texts'];
     const n=U.h('div',{class:'nav'}); const inner=U.h('div',{class:'in'});
     tabs.forEach(t=>{ const on=App.screen===t[0]||(t[0]==='practice'&&sub.includes(App.screen)); inner.appendChild(U.h('button',{class:on?'on':'',type:'button',onclick:()=>App.go(t[0])},U.h('span',{class:'i'},t[1]),t[2])); });
@@ -95,13 +97,14 @@ Screens.home=function(r){
   if(!fresh&&!s.finished){ const b=s.blocks[s.bi]; card.appendChild(U.h('div',{class:'muted',style:'margin-top:8px'},'Блок '+(s.bi+1)+' из '+s.blocks.length+': '+b.icon+' '+b.title+' · задание '+Math.min(b.i+1,b.items.length)+' из '+b.items.length)); }
   r.appendChild(card);
   const inst=PWA.card(); if(inst) r.appendChild(inst);
+  if(s.finished||Report.due()) r.appendChild(Report.card());
   if(!s.finished){ const plan=U.h('div',{class:'card plan'}); const mins=Math.max(1,Math.round(Planner.estSum([].concat(...s.blocks.map(b=>b.items)))/60));
     plan.appendChild(U.h('h3',{style:'margin-top:0'},'План на сегодня · '+total+' '+U.plural(total,'задание','задания','заданий')+' · около '+mins+' мин'));
     if(s.lvl) plan.appendChild(U.h('div',{class:'muted',style:'margin:-4px 0 6px'},'Сложность: '+LEVELS[s.lvl]+((P.settings.level||'auto')==='auto'?' (подбирается сама по точности)':'')));
     s.blocks.forEach(b=>{ const st=U.h('div',{class:'step'+(b.done?' done':'')}); st.appendChild(U.h('div',{class:'ic'},b.icon));
       st.appendChild(U.h('div',{class:'grow'},U.h('div',{class:'t'},b.title),U.h('div',{class:'muted'},Session.blockSub(b))));
       st.appendChild(U.h('div',{class:'m'},b.items.length+' · ≈'+Math.max(1,Math.round(Planner.estSum(b.items)/60))+' мин')); plan.appendChild(st); });
-    plan.appendChild(U.h('p',{class:'muted',style:'margin-bottom:0'},'Таймера нет: сделал все задания — занятие закончено.'));
+    plan.appendChild(U.h('p',{class:'muted',style:'margin-bottom:0'},'Таймера нет: сделал все задания — занятие закончено.'+(Auto.on()?' После занятия папа получает короткий отчёт.':'')));
     r.appendChild(plan); }
   const known=Planner.knownWords().length; const sure=Content.wordList.filter(w=>P.cards[w.key]&&P.cards[w.key].s>=3).length; const unitsDone=GRAMMAR.filter(u=>Planner.unitDone(u.id)).length;
   r.appendChild(U.h('div',{class:'grid3'},App.stat(known,'слов в работе'),App.stat(sure,'слов уверенно'),App.stat(unitsDone,'тем грамматики')));
@@ -124,6 +127,7 @@ const Session = {
       case 'spell': return 'диктант, пропущенные буквы, предложения на слух';
       case 'read': return 'короткий текст и вопросы';
       case 'speak': return 'фразы вслух'+(b.dialog?', диалог «'+b.dialog+'»':'');
+      case 'check': return 'раз в неделю: задания без подсказок, результат увидит папа';
     } return n+' заданий'; },
   startDaily(){ Session.s=Session.ensurePlan(); Session.opts=null; Prof.save(); App.go('session'); },
   runFree(block,opts){ if(!block||!block.items||!block.items.filter(Boolean).length){ U.toast('Нечего тренировать'); return; } block.items=block.items.filter(Boolean); Object.assign(block,{i:0,spent:0,done:false,n:0,ok:0,rq:0}); Session.s={date:Day.key(),bi:0,blocks:[block],created:Date.now(),finished:false,n:0,ok:0,xp:0,free:true}; Session.opts=opts||null; App.go('session'); },
@@ -142,11 +146,16 @@ const Session = {
     const it=b.items[b.i]; Session.progEl.firstChild.style.width=Math.round(b.i/Math.max(1,b.items.length)*100)+'%'; Session.cntEl.textContent=(b.i+1)+' / '+b.items.length;
     Session.t0=Date.now(); Ex.render(it,Session.body,{done:res=>Session.onDone(it,res)}); },
   onDone(it,res){ const s=Session.s, b=Session.cur(); const t=Prof.today(); it._ok=res.ok; it._g=res.grade; let xp=0; const graded=res.grade!=null;
+    if(it.test){ const code=res.ok===true?1:res.ok==='almost'?2:0; s.cs=s.cs||{it:[]}; s.cs.it.push([Report.promptOf(it),String(res.expected||''),String(res.got||''),code]); if(!s.free) P.session=s; Prof.save();
+      const fb=Session.fbEl; fb.innerHTML=''; const box=U.h('div',{class:'fb '+(code===1?'ok':code===2?'warn':'bad')+' fade'}); box.appendChild(U.h('b',null,code===1?'Верно':code===2?'Почти (опечатка)':'Неверно')); if(code!==1&&res.expected) box.appendChild(U.h('div',{class:'ans'},res.expected));
+      fb.appendChild(box); const nx=U.h('button',{class:'btn pri big',type:'button'},'Дальше →'); nx.onclick=()=>Session.next(); fb.appendChild(U.h('div',{class:'actions'},nx)); App._enter=nx; if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); return; }
     if(graded){ const ok=res.ok===true; b.n++; s.n++; t.n++; if(ok){ b.ok++; s.ok++; t.ok++; } xp=ok?10:res.ok==='almost'?6:2;
       if(it.key) SRS.grade(it.key,res.grade);
       if(it.unit&&!it.placement&&Planner.GRAM_TYPES.includes(it.t)){ const u=P.units[it.unit]||(P.units[it.unit]={h:[],seen:true}); u.h=(u.h||[]).concat(ok||res.ok==='almost'?1:0).slice(-30); u.last=Day.idx(); u.n=(u.n||0)+1; if(ok) u.ok=(u.ok||0)+1;
         if(it.di&&!it._re){ u.sh=u.sh||{}; u.sh[it.di]=(u.sh[it.di]||0)+1; } } }
     else xp=res.perKey?8:3;
+    if(it.t==='card'&&it.key&&it.key.indexOf('w:')===0&&!it._re) t.nw=(t.nw||0)+1;
+    if(graded&&it._hint) t.hint=(t.hint||0)+1; if(res.self) t.self=(t.self||0)+1;
     if(res.perKey) for(const k in res.perKey) SRS.grade(k,res.perKey[k]);
     const requeue=graded&&res.grade===0&&!it._re&&!b.noRequeue&&it.t!=='read'&&it.t!=='dialog'&&(b.rq||0)<3;
     if(requeue){ b.rq=(b.rq||0)+1; const copy=Object.assign({},it,{_re:true,_hint:false,_ok:null,_g:null}); b.items.splice(Math.min(b.items.length,b.i+4),0,copy); }
@@ -163,15 +172,19 @@ const Session = {
   next(){ const b=Session.cur(); const it=b.items[b.i]; if(it&&Session.t0&&!document.hidden) Planner.recordPace(it,(Date.now()-Session.t0)/1000); Session.t0=0; b.i++; if(!Session.s.free) P.session=Session.s; Session.showItem(); },
   finishBlock(){ const s=Session.s, b=Session.cur(); b.done=true; s.xp+=20; Prof.today().xp+=20; P.xp+=20; Session.stopTimer(); const acc=b.n?Math.round(b.ok/b.n*100):null;
     const r=Session.host; r.innerHTML=''; const card=U.h('div',{class:'card center fade'}); card.appendChild(U.h('div',{class:'confetti'},b.icon)); card.appendChild(U.h('h2',null,'Блок «'+b.title+'» готов'));
-    card.appendChild(U.h('div',{class:'grid3'},App.stat(b.n,'заданий'),App.stat(b.ok,'верно сразу'),App.stat(acc==null?'—':acc+'%','точность')));
+    if(b.id==='check'&&s.cs&&s.cs.it){ const it=s.cs.it; const sc=it.reduce((a,x)=>a+(x[3]===1?1:x[3]===2?0.5:0),0);
+      card.appendChild(U.h('div',{class:'grid3'},App.stat(it.length,'заданий'),App.stat(Report.num(sc),'верно'),App.stat(Math.round(sc/it.length*100)+'%','результат')));
+      card.appendChild(U.h('p',{class:'muted'},'Результат проверки и ответы попадут в недельный отчёт папе.')); }
+    else card.appendChild(U.h('div',{class:'grid3'},App.stat(b.n,'заданий'),App.stat(b.ok,'верно сразу'),App.stat(acc==null?'—':acc+'%','точность')));
     let btn;
     if(s.bi<s.blocks.length-1){ const nb=s.blocks[s.bi+1]; card.appendChild(U.h('p',{class:'muted'},'Дальше: '+nb.icon+' '+nb.title+' · '+nb.items.length+' '+U.plural(nb.items.length,'задание','задания','заданий'))); btn=U.h('button',{class:'btn pri big',type:'button'},'Продолжить →'); btn.onclick=()=>{ s.bi++; if(!s.free) P.session=s; Prof.save(); App.render(); }; }
-    else { s.finished=true; if(!s.free){ P.session=s; Prof.markDone(); if(s.blocks.some(x=>x.items.some(it=>it&&it.t==='dialog'))) P.dlgIdx=(P.dlgIdx||0)+1; } btn=U.h('button',{class:'btn pri big',type:'button'},'Итоги →'); btn.onclick=()=>Session.summary(); }
+    else { s.finished=true; if(!s.free){ P.session=s; Prof.markDone(); if(s.blocks.some(x=>x.items.some(it=>it&&it.t==='dialog'))) P.dlgIdx=(P.dlgIdx||0)+1; Prof.save(); Auto.afterSession(s); } btn=U.h('button',{class:'btn pri big',type:'button'},'Итоги →'); btn.onclick=()=>Session.summary(); }
     card.appendChild(U.h('div',{class:'actions'},btn)); App._enter=btn; r.appendChild(card); if(!s.free) P.session=s; Prof.save(); },
   summary(){ const s=Session.s; Session.stopTimer(); const r=Session.host||App.root; r.innerHTML=''; const spent=s.blocks.reduce((a,b)=>a+(b.spent||0),0); const acc=s.n?Math.round(s.ok/s.n*100):null;
     const card=U.h('div',{class:'card center fade'}); card.appendChild(U.h('div',{class:'confetti'},s.free?'🎯':'🏆')); card.appendChild(U.h('h2',null,s.free?'Тренировка завершена':'Занятие выполнено!'));
     card.appendChild(U.h('div',{class:'grid3'},App.stat(s.n,'заданий'),App.stat(acc==null?'—':acc+'%','точность'),App.stat(Math.max(1,Math.round(spent/60))+' мин','заняло')));
     card.appendChild(U.h('p',null,'+'+s.xp+' XP'+(s.free?'':' · серия 🔥 '+P.streak+' '+U.plural(P.streak,'день','дня','дней'))));
+    if(!s.free) card.appendChild(U.h('button',{class:'btn soft',type:'button',style:'margin:4px 0 8px',onclick:()=>{ Session.s=null; Session.opts=null; App.go('check'); }},'📨 Отправить отчёт папе'));
     if(!s.free){ const unit=Planner.currentUnit(); const dt=SRS.dueCountTomorrow(); card.appendChild(U.h('p',{class:'muted'},'Завтра: '+unit.icon+' '+unit.title+' · '+dt+' '+U.plural(dt,'карточка','карточки','карточек')+' к повторению.')); }
     const btn=U.h('button',{class:'btn pri big',type:'button'},'Готово'); btn.onclick=()=>{ const o=Session.opts; const free=s.free; Session.s=null; Session.opts=null; if(o&&o.onEnd) o.onEnd(s); else App.go(free?'practice':'home'); }; card.appendChild(U.h('div',{class:'actions'},btn)); App._enter=btn; r.appendChild(card); },
   exit(){ Session.stopTimer(); Prof.save(); const s=Session.s; Session.s=null; Session.opts=null; App.go(s&&s.free?'practice':'home'); },
@@ -263,8 +276,11 @@ Screens.more=function(r){ r.appendChild(U.h('h1',null,'⚙️ Ещё'));
   const cp=U.h('button',{class:'btn soft',type:'button'},'📋 Скопировать код'); cp.onclick=()=>{ const code=btoa(unescape(encodeURIComponent(Prof.exportJSON()))); codeBox.hidden=false; codeBox.value=code; const show=()=>{ codeBox.focus(); codeBox.select(); U.toast('Код показан ниже — выдели и скопируй'); }; if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(code).then(()=>U.toast('Код скопирован ('+code.length+' символов)')).catch(show); else show(); };
   const ps=U.h('button',{class:'btn soft',type:'button'},'📥 Вставить код'); let pasteMode=false; ps.onclick=()=>{ if(!pasteMode){ pasteMode=true; codeBox.hidden=false; codeBox.value=''; ps.textContent='✅ Загрузить код'; Ex.focus(codeBox); return; } const code=codeBox.value.trim(); if(!code){ U.toast('Вставь код в поле ниже'); return; } try{ Prof.importJSON(decodeURIComponent(escape(atob(code)))); Theme.apply(); U.toast('Профиль загружен'); App.go('home'); }catch(e){ U.toast('Код не распознан'); } };
   dc.appendChild(U.h('div',{class:'grid2'},dl,ul,cp,ps)); dc.appendChild(codeBox); dc.appendChild(up); r.appendChild(dc);
+  const rc=U.h('div',{class:'card'}); rc.appendChild(U.h('h3',{style:'margin-top:0'},'📨 Отчёт папе'));
+  rc.appendChild(U.h('p',{class:'muted',style:'margin-top:0'},'Короткая проверка без подсказок, потом ссылка с оценкой и результатами — её можно отправить в Telegram, WhatsApp или СМС. '+(Report.lastText()?'Последний отчёт: '+Report.lastText()+'.':'Отчёт ещё не отправляли.')));
+  rc.appendChild(U.h('div',{class:'row'},U.h('button',{class:'btn pri',type:'button',onclick:()=>App.go('check')},'Пройти проверку и отправить'),U.h('button',{class:'btn soft',type:'button',onclick:()=>App.go('parent')},Auto.on()?'Автоотправка: включена ✅':'Автоотправка в Telegram')));
+  r.appendChild(rc);
   r.appendChild(PWA.statusCard());
   const ab=U.h('div',{class:'card'}); ab.appendChild(U.h('h3',{style:'margin-top:0'},'Как устроено обучение')); ab.appendChild(U.h('div',{class:'rule',html:App.ABOUT})); r.appendChild(ab);
   r.appendChild(U.h('p',{class:'muted center'},'English 30 · сборка '+window.APP_VERSION+' · прогресс хранится в этом браузере')); };
 
-App.init();

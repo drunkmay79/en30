@@ -204,3 +204,24 @@ button{font:inherit;color:inherit}
 @keyframes shake{25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
 .confetti{font-size:40px;text-align:center}
 @media (max-width:380px){.ex .q{font-size:21px} .opt{font-size:17px}}
+
+/* отчёт для папы */
+.mark{flex:none;width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;background:var(--soft);color:var(--muted)}
+.mark.sm{width:36px;height:36px;font-size:18px}
+.mark.m5{background:var(--ok-bg);color:var(--ok-t)} .mark.m4{background:var(--pri-bg);color:var(--pri)} .mark.m3{background:var(--warn-bg);color:var(--warn-t)} .mark.m2{background:var(--bad-bg);color:var(--bad-t)}
+.part{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);margin-top:10px}
+.part .t{font-weight:700}
+.part .pv{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rbars{display:flex;gap:4px;align-items:flex-end;height:118px}
+.rbars .rb{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;height:100%;font-size:11px;color:var(--muted)}
+.rbars .rb i{display:block;width:100%;max-width:26px;border-radius:4px 4px 0 0;background:var(--s)}
+.rbars .rb i.done{background:var(--o)}
+.rbars .rb .v{font-variant-numeric:tabular-nums;font-size:11px;min-height:14px}
+.rbars .rb.cur .l{color:var(--text);font-weight:700}
+.rbars .rb .l2{font-size:10px}
+.rlist{margin:6px 0 10px;padding-left:20px}
+.rlist li{margin:4px 0}
+.rtest .rq{padding:8px 0;border-top:1px solid var(--line);align-items:flex-start}
+.rtest .rq:first-child{border-top:0}
+.rtest .ic{font-size:18px;width:26px;flex:none}
+.bad-t{color:var(--bad);text-decoration:line-through}

@@ -138,7 +138,7 @@ Ex.types.tr=function(it,w,ctx){ let done=false;
     ctx.done({ok:m.ok,grade:Ex.capHint(it,m.ok===true?3:m.ok==='almost'?1:0),expected:m.best,got:val,html,say:m.best}); };
   inp.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); check(); } };
   const hb=U.h('button',{class:'btn sm soft',type:'button'},'💡 Подсказка'); hb.onclick=()=>{ it._hint=true; const words=it.a[0].split(' '); hint.textContent='Слов: '+words.length+'. Начало: '+words[0]+' …'; };
-  w.appendChild(U.h('div',{class:'actions'},hb,U.h('button',{class:'btn pri grow',type:'button',onclick:check},'Проверить'))); Ex.hintBtn(it,w,ctx); Ex.focus(inp); };
+  w.appendChild(U.h('div',{class:'actions'},it.test?null:hb,U.h('button',{class:'btn pri grow',type:'button',onclick:check},'Проверить'))); Ex.hintBtn(it,w,ctx); Ex.focus(inp); };
 
 Ex.types.err=function(it,w,ctx){ let step=1, done=false;
   w.appendChild(U.h('div',{class:'q'},'Нажми на слово с ошибкой:')); const ws=U.h('div',{class:'words'}); const wrong=it.w.split(' ').map(x=>x.replace(/[.?!,]$/,'').toLowerCase());
