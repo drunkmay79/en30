@@ -224,7 +224,7 @@ Screens.texts=function(r){ r.appendChild(App.back('practice','Практика')
   TEXTS.forEach(t=>list.appendChild(U.h('div',{class:'item',onclick:()=>Session.runFree(Planner.freeBlock('text',t.id))},U.h('div',{class:'ic'},t.icon),U.h('div',{class:'grow'},U.h('div',{class:'t'},t.title),U.h('div',{class:'sub'},t.lvl+(P.read[t.id]?' · прочитан '+P.read[t.id]+' раз':''))),U.h('div',{class:'right'},'›')))); r.appendChild(list); };
 
 /* ---------- Прогресс ---------- */
-Screens.stats=function(r){ r.appendChild(U.h('h1',null,'📈 Прогресс')); const days=Object.values(P.days); const total=days.filter(d=>d.done).length; const n=days.reduce((a,d)=>a+d.n,0), ok=days.reduce((a,d)=>a+d.ok,0); const acc=n?Math.round(ok/n*100):0;
+Screens.stats=function(r){ r.appendChild(U.h('h1',null,'📈 Прогресс')); r.appendChild(U.h('button',{class:'btn soft',type:'button',style:'margin-bottom:6px',onclick:()=>App.go('full')},'📊 Полный отчёт за всё время')); const days=Object.values(P.days); const total=days.filter(d=>d.done).length; const n=days.reduce((a,d)=>a+d.n,0), ok=days.reduce((a,d)=>a+d.ok,0); const acc=n?Math.round(ok/n*100):0;
   const words=Content.wordList; const chunks=Content.chunkList.filter(c=>P.cards[c.key]&&P.cards[c.key].s>=2).length;
   r.appendChild(U.h('div',{class:'grid3'},App.stat('🔥 '+P.streak,'серия дней'),App.stat(P.best,'лучшая серия'),App.stat(total,'занятий'),App.stat(P.xp,'XP всего'),App.stat(acc+'%','точность'),App.stat(SRS.dueCount(),'к повторению')));
   const wk=U.h('div',{class:'card'}); wk.appendChild(U.h('h3',{style:'margin-top:0'},'Последние 7 дней, минуты')); const w=U.h('div',{class:'week'}); const names=['вс','пн','вт','ср','чт','пт','сб']; let max=1; const arr=[];
@@ -278,7 +278,7 @@ Screens.more=function(r){ r.appendChild(U.h('h1',null,'⚙️ Ещё'));
   dc.appendChild(U.h('div',{class:'grid2'},dl,ul,cp,ps)); dc.appendChild(codeBox); dc.appendChild(up); r.appendChild(dc);
   const rc=U.h('div',{class:'card'}); rc.appendChild(U.h('h3',{style:'margin-top:0'},'📨 Отчёт папе'));
   rc.appendChild(U.h('p',{class:'muted',style:'margin-top:0'},'Короткая проверка без подсказок, потом ссылка с оценкой и результатами — её можно отправить в Telegram, WhatsApp или СМС. '+(Report.lastText()?'Последний отчёт: '+Report.lastText()+'.':'Отчёт ещё не отправляли.')));
-  rc.appendChild(U.h('div',{class:'row'},U.h('button',{class:'btn pri',type:'button',onclick:()=>App.go('check')},'Пройти проверку и отправить'),U.h('button',{class:'btn soft',type:'button',onclick:()=>App.go('parent')},Auto.on()?'Автоотправка: включена ✅':'Автоотправка в Telegram')));
+  rc.appendChild(U.h('div',{class:'row'},U.h('button',{class:'btn pri',type:'button',onclick:()=>App.go('check')},'Пройти проверку и отправить'),U.h('button',{class:'btn soft',type:'button',onclick:()=>App.go('full')},'📊 Полный отчёт'),U.h('button',{class:'btn soft',type:'button',onclick:()=>App.go('parent')},Auto.on()?'Автоотправка: включена ✅':'Автоотправка в Telegram')));
   r.appendChild(rc);
   r.appendChild(PWA.statusCard());
   const ab=U.h('div',{class:'card'}); ab.appendChild(U.h('h3',{style:'margin-top:0'},'Как устроено обучение')); ab.appendChild(U.h('div',{class:'rule',html:App.ABOUT})); r.appendChild(ab);

@@ -17,19 +17,26 @@ const Report = {
   async decode(code){ const kind=code[0]; const bytes=Report.unb64u(code.slice(1)); let json;
     if(kind==='z'){ if(!window.DecompressionStream) throw new Error('old-browser'); const st=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')); json=await new Response(st).text(); }
     else if(kind==='j') json=new TextDecoder().decode(bytes); else throw new Error('kind');
-    const o=JSON.parse(json); if(!o||o.v!==1||!Array.isArray(o.days)||o.days.length!==14||!Array.isArray(o.st)) throw new Error('format'); return o; },
+    const o=JSON.parse(json); if(!o||(o.v!==1&&o.v!==2)||!Array.isArray(o.days)||o.days.length!==14||!Array.isArray(o.st)) throw new Error('format'); return o; },
 
   /* --- данные отчёта ---
      days: 14 дней, старые → сегодня; день = 0 или [минуты, заданий, верно сразу, занятие выполнено, новых слов, подсказок, самооценок]
      st: [серия, лучшая серия, занятий всего, XP, слов в работе, слов уверенно, слов всего, фраз освоено]
-     g: темы грамматики с ответами: [номер темы, освоение %, пройдена, сколько дней назад пройдена или -1] */
+     g: темы грамматики с ответами: [номер темы, освоение %, пройдена, сколько дней назад пройдена или -1]
+     v2 добавляет всю историю: wk — недели (последняя = 7 дней по сегодня) [минуты, заданий, верно сразу, дней с занятиями, занятий выполнено, новых слов];
+     since — первый день занятий; th — темы слов [в работе, уверенно]; ch — история проверок [дней назад, баллы, из скольких, попытка] */
   build(cs){
-    const today=Day.idx(); const days=[];
+    const today=Day.idx(); const days=[]; const W=Content.wordList; const c=k=>P.cards[k];
     for(let i=13;i>=0;i--){ const x=P.days[Day.key(Day.shift(-i))]; days.push(x&&(x.sec||x.n)?[Math.round((x.sec||0)/60),x.n||0,x.ok||0,x.done?1:0,x.nw||0,x.hint||0,x.self||0]:0); }
-    const W=Content.wordList; const c=k=>P.cards[k];
+    const keys=Object.keys(P.days).filter(k=>P.days[k]&&(P.days[k].sec||P.days[k].n)).sort(); const since=keys[0]||Day.key();
+    const ago=k=>today-Day.idx(Report.dateOf(k,0)); const nW=Math.min(104,Math.floor(ago(since)/7)+1); const wk=Array.from({length:nW},()=>[0,0,0,0,0,0]);
+    keys.forEach(k=>{ const w=Math.floor(ago(k)/7); if(w<0||w>=nW) return; const x=P.days[k], e=wk[nW-1-w]; e[0]+=Math.round((x.sec||0)/60); e[1]+=x.n||0; e[2]+=x.ok||0; if((x.sec||0)>=300||(x.n||0)>=10) e[3]++; if(x.done) e[4]++; e[5]+=x.nw||0; });
+    const th=VOCAB.map(t=>{ const ws=Content.byTheme[t.id]; return [ws.filter(w=>c(w.key)&&c(w.key).s>=1).length,ws.filter(w=>c(w.key)&&c(w.key).s>=3).length]; });
+    const ch=(P.csHist||[]).slice(-12).map(x=>[ago(x[0]),x[1],x[2],x[3]||1]);
+    if(!cs&&P.lastCs&&P.lastCs.d&&ago(P.lastCs.d)<7) cs=P.lastCs;
     const g=[]; GRAMMAR.forEach((u,i)=>{ const x=P.units[u.id]; if(!x||!x.h||!x.h.length) return; const done=Planner.unitDone(u.id); g.push([i,Planner.unitProg(u.id),done?1:0,done&&x.doneAt!=null?today-x.doneAt:-1]); });
-    const weak=W.concat(Content.chunkList).map(o=>({o,k:c(o.key)})).filter(x=>x.k&&x.k.l>0).sort((a,b)=>(b.k.l/(b.k.st||1))-(a.k.l/(a.k.st||1))||b.k.l-a.k.l).slice(0,6).map(x=>[x.o.en,x.o.ru,x.k.l,x.k.st||0]);
-    return {v:1,t:Date.now(),d:Day.key(),n:P.name,lvl:Planner.level(),goal:P.settings.goal||30,days,
+    const weak=W.concat(Content.chunkList).map(o=>({o,k:c(o.key)})).filter(x=>x.k&&x.k.l>0).sort((a,b)=>(b.k.l/(b.k.st||1))-(a.k.l/(a.k.st||1))||b.k.l-a.k.l).slice(0,8).map(x=>[x.o.en,x.o.ru,x.k.l,x.k.st||0]);
+    return {v:2,wk,since,th,ch,t:Date.now(),d:Day.key(),n:P.name,lvl:Planner.level(),goal:P.settings.goal||30,days,
       st:[P.streak,P.best,Object.values(P.days).filter(d=>d.done).length,P.xp,W.filter(w=>c(w.key)&&c(w.key).s>=1).length,W.filter(w=>c(w.key)&&c(w.key).s>=3).length,W.length,Content.chunkList.filter(x=>c(x.key)&&c(x.key).s>=2).length],
       cu:GRAMMAR.indexOf(Planner.currentUnit()),g,weak,cs:cs||null};
   },
@@ -51,7 +58,8 @@ const Report = {
   summaryText(rep){ const g=Report.grade(rep); const mins=rep.days.slice(-7).reduce((a,x)=>a+(x?x[0]:0),0);
     const from=Report.fmt(Report.dateOf(rep.d,-6)), to=Report.fmt(Report.dateOf(rep.d,0));
     return '📘 English 30 · '+rep.n+' · '+from+' — '+to+'\nОценка недели: '+g.mark+' ('+MARKS[g.mark]+')\nДней с занятиями: '+g.act+' из 7 · '+Report.mins(mins)+
-      (g.acc!=null?'\nТочность с первой попытки: '+Math.round(g.acc*100)+' %':'')+(rep.cs?'\nПроверка без подсказок: '+Report.num(rep.cs.sc)+' из '+rep.cs.tot:'')+'\nПодробный отчёт по ссылке:'; },
+      (g.acc!=null?'\nТочность с первой попытки: '+Math.round(g.acc*100)+' %':'')+(rep.cs?'\nПроверка без подсказок: '+Report.num(rep.cs.sc)+' из '+rep.cs.tot:'')+
+      (rep.wk?(()=>{ const t=Report.totals(rep); return '\nЗа всё время: '+t.done+' '+U.plural(t.done,'занятие','занятия','занятий')+' · '+Report.hrs(t.min)+' · тем грамматики '+rep.g.filter(x=>x[2]).length+' из '+GRAMMAR.length+' · слов '+rep.st[4]; })():'')+'\nПодробный отчёт по ссылке:'; },
   num(x){ return String(Math.round(x*10)/10).replace('.',','); },
 
   /* --- проверка без подсказок: только то, что уже выучено --- */
@@ -64,6 +72,10 @@ const Report = {
     U.shuffle(pool).slice(0,Math.max(4,10-items.length)).forEach(d=>items.push(d));
     return U.shuffle(items).slice(0,10);
   },
+  saveCheck(cs){ if(!cs||!cs.tot) return; P.csHist=(P.csHist||[]).concat([[Day.key(),cs.sc,cs.tot,cs.att||1]]).slice(-60); P.lastCs=Object.assign({d:Day.key()},cs); Prof.save(); },
+  totals(rep){ const t={min:0,n:0,ok:0,act:0,done:0,nw:0}; (rep.wk||[]).forEach(e=>{ t.min+=e[0]; t.n+=e[1]; t.ok+=e[2]; t.act+=e[3]; t.done+=e[4]; t.nw+=e[5]; });
+    t.span=Math.round((Report.dateOf(rep.d,0)-Report.dateOf(rep.since||rep.d,0))/86400000)+1; return t; },
+  hrs(m){ return m<60?m+' мин':Report.num(m/60)+' ч'; },
   promptOf(it){ if(it.t==='wtype'){ const o=Content.get(it.key); return (o.em?o.em+' ':'')+o.ru; } if(it.t==='dict') return '🔊 диктант на слух'; if(it.t==='tr') return it.ru; return it.q; },
 
   /* --- отправка: меню «Поделиться» (Telegram, WhatsApp…); если его нет — ссылку можно скопировать --- */
@@ -110,7 +122,7 @@ Screens.check=function(r){
       if(code!==1) box.appendChild(U.h('div',{class:'ans'},x.expected||'')); fb.appendChild(box);
       const nx=U.h('button',{class:'btn pri big',type:'button'},i+1<items.length?'Дальше →':'Результат →'); nx.onclick=()=>run(i+1); fb.appendChild(U.h('div',{class:'actions'},nx)); App._enter=nx;
       if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); }}); }
-  function finish(){ const sc=res.reduce((a,x)=>a+(x[3]===1?1:x[3]===2?0.5:0),0); const cs={sc,tot:res.length,att,it:res};
+  function finish(){ const sc=res.reduce((a,x)=>a+(x[3]===1?1:x[3]===2?0.5:0),0); const cs={sc,tot:res.length,att,it:res}; Report.saveCheck(cs);
     const cp=sc/res.length; const m=cp>=0.9?5:cp>=0.75?4:cp>=0.55?3:2;
     const c=U.h('div',{class:'card center fade'}); c.appendChild(U.h('div',{class:'confetti'},m>=4?'🎉':'💪')); c.appendChild(U.h('h2',null,'Проверка: '+Report.num(sc)+' из '+res.length));
     c.appendChild(U.h('p',{class:'muted'},'Оценка за проверку: '+m+' — '+MARKS[m]+'.'));
@@ -130,7 +142,7 @@ Report.render=function(wrap,rep){
   wrap.innerHTML=''; const g=Report.grade(rep); const base=Report.dateOf(rep.d,0); const days=rep.days;
   const created=new Date(rep.t); const wk=['вс','пн','вт','ср','чт','пт','сб'];
   wrap.appendChild(U.h('h1',null,'Отчёт: '+rep.n));
-  wrap.appendChild(U.h('p',{class:'muted',style:'margin-top:-2px'},'English 30 · за 7 дней по '+Report.fmt(base)+' · создан '+Report.fmt(created)+' в '+U.pad(created.getHours())+':'+U.pad(created.getMinutes())+' · сложность: '+(LEVELS[rep.lvl]||rep.lvl)));
+  wrap.appendChild(U.h('p',{class:'muted',style:'margin-top:-2px'},'English 30 · '+(rep.since?'с '+Report.fmt(Report.dateOf(rep.since,0))+' по '+Report.fmt(base):'за 7 дней по '+Report.fmt(base))+' · создан '+Report.fmt(created)+' в '+U.pad(created.getHours())+':'+U.pad(created.getMinutes())+' · сложность: '+(LEVELS[rep.lvl]||rep.lvl)));
   /* оценка */
   const gc=U.h('div',{class:'card'}); const head=U.h('div',{class:'row nowrap',style:'gap:16px'});
   head.appendChild(U.h('div',{class:'mark m'+g.mark},String(g.mark))); head.appendChild(U.h('div',null,U.h('div',{style:'font-size:22px;font-weight:800'},'Оценка недели: '+MARKS[g.mark]),U.h('div',{class:'muted'},'Среднее из трёх частей: '+Report.num(g.avg))));
@@ -138,8 +150,9 @@ Report.render=function(wrap,rep){
   const part=(title,val,mark,note)=>U.h('div',{class:'part'},U.h('div',{class:'grow'},U.h('div',{class:'t'},title),U.h('div',{class:'muted'},note)),U.h('div',{class:'pv'},val),mark!=null?U.h('div',{class:'mark sm m'+mark},String(mark)):U.h('div',{class:'mark sm'},'—'));
   gc.appendChild(part('Регулярность',g.act+' из 7',g.reg,'дней с занятиями; полностью выполнено занятий: '+g.full));
   gc.appendChild(part('Точность',g.acc==null?'—':Math.round(g.acc*100)+' %',g.qual,'ответов верно с первой попытки, '+g.n+' '+U.plural(g.n,'задание','задания','заданий')+' за неделю'));
-  gc.appendChild(part('Проверка без подсказок',rep.cs?Report.num(rep.cs.sc)+' из '+rep.cs.tot:'—',g.test,rep.cs?('случайные задания по выученному'+(rep.cs.att>1?'; попытка '+rep.cs.att+' за день':'; с первой попытки')):'проверку не проходили'));
+  gc.appendChild(part('Проверка без подсказок',rep.cs?Report.num(rep.cs.sc)+' из '+rep.cs.tot:'—',g.test,rep.cs?((rep.cs.d&&rep.cs.d!==rep.d?'проверка от '+Report.fmt(Report.dateOf(rep.cs.d,0))+'; ':'')+'случайные задания по выученному'+(rep.cs.att>1?'; попытка '+rep.cs.att+' за день':'; с первой попытки')):(rep.ch&&rep.ch.length?'на этой неделе проверки не было, прошлые — ниже':'проверку не проходили')));
   wrap.appendChild(gc);
+  if(rep.wk) Report.renderAll(wrap,rep);
   /* занятия по дням */
   const ac=U.h('div',{class:'card'}); const wkMin=days.slice(-7).reduce((a,x)=>a+(x?x[0]:0),0), prevMin=days.slice(0,7).reduce((a,x)=>a+(x?x[0]:0),0);
   ac.appendChild(U.h('h3',{style:'margin-top:0'},'Занятия за две недели'));
@@ -155,13 +168,16 @@ Report.render=function(wrap,rep){
   wrap.appendChild(U.h('div',{class:'grid3'},App.stat(st[4],'слов в работе из '+st[6]),App.stat(st[5],'слов знает уверенно'),App.stat('+'+nw,'новых слов за неделю'),App.stat(doneG+' / '+GRAMMAR.length,'тем грамматики'),App.stat('🔥 '+st[0],'дней подряд'),App.stat(st[2],'занятий всего')));
   const gr=U.h('div',{class:'card'}); gr.appendChild(U.h('h3',{style:'margin-top:0'},'Грамматика'));
   const cu=GRAMMAR[rep.cu]; if(cu) gr.appendChild(U.h('p',null,'Сейчас изучает: ',U.h('b',null,cu.icon+' '+cu.title)));
+  if(rep.v>=2) gr.appendChild(Report.grammarMap(rep));
   if(weekG.length){ gr.appendChild(U.h('div',{class:'muted'},'Пройдено за неделю:')); const l=U.h('ul',{class:'rlist'}); weekG.forEach(x=>{ const u=GRAMMAR[x[0]]; if(u) l.appendChild(U.h('li',null,'✅ '+u.title+' — '+x[1]+' %')); }); gr.appendChild(l); }
   const weakG=rep.g.filter(x=>!x[2]&&x[1]<60&&x[0]!==rep.cu).sort((a,b)=>a[1]-b[1]).slice(0,5);
   if(weakG.length){ gr.appendChild(U.h('div',{class:'muted'},'Темы, которые стоит подтянуть:')); const l=U.h('ul',{class:'rlist'}); weakG.forEach(x=>{ const u=GRAMMAR[x[0]]; if(u) l.appendChild(U.h('li',null,'⚠️ '+u.title+' — '+x[1]+' %')); }); gr.appendChild(l); }
   if(!weekG.length&&!weakG.length&&!cu) gr.appendChild(U.h('p',{class:'muted'},'Пока нет данных.'));
   wrap.appendChild(gr);
+  if(rep.th) Report.renderThemes(wrap,rep);
+  if(rep.ch&&rep.ch.length) Report.renderChecks(wrap,rep);
   /* проверка: вопросы и ответы */
-  if(rep.cs&&rep.cs.it&&rep.cs.it.length){ const cc=U.h('div',{class:'card'}); cc.appendChild(U.h('h3',{style:'margin-top:0'},'Ответы в проверке'));
+  if(rep.cs&&rep.cs.it&&rep.cs.it.length){ const cc=U.h('div',{class:'card'}); cc.appendChild(U.h('h3',{style:'margin-top:0'},'Ответы в проверке'+(rep.cs.d&&rep.cs.d!==rep.d?' от '+Report.fmt(Report.dateOf(rep.cs.d,0)):'')));
     const tb=U.h('div',{class:'rtest'}); rep.cs.it.forEach(x=>{ const ok=x[3]===1, al=x[3]===2;
       tb.appendChild(U.h('div',{class:'row nowrap rq'},U.h('div',{class:'ic'},ok?'✅':al?'🟡':'❌'),U.h('div',{class:'grow'},U.h('div',{class:'muted'},x[0]),U.h('div',null,U.h('span',{class:ok?'':'bad-t'},x[2]||'— нет ответа'),ok?'':U.h('span',{class:'muted'},'  →  '),ok?'':U.h('b',null,x[1]))))); });
     cc.appendChild(tb); wrap.appendChild(cc); }
@@ -205,7 +221,7 @@ const Auto = {
   afterSession(s){ if(!Auto.on()||s.free) return; const c=Auto.cfg();
     if(c.daily) Auto.push(Auto.dailyText(s));
     const chk=s.blocks.find(b=>b.id==='check');
-    if(chk&&s.cs&&s.cs.it&&s.cs.it.length){ const it=s.cs.it; const sc=it.reduce((a,x)=>a+(x[3]===1?1:x[3]===2?0.5:0),0); const cs={sc,tot:it.length,att:1,it};
+    if(chk&&s.cs&&s.cs.it&&s.cs.it.length){ const it=s.cs.it; const sc=it.reduce((a,x)=>a+(x[3]===1?1:x[3]===2?0.5:0),0); const cs={sc,tot:it.length,att:1,it}; Report.saveCheck(cs);
       const rep=Report.build(cs); Report.encode(rep).then(code=>Auto.push(Report.summaryText(rep)+'\n'+SITE_URL+'#r='+code));
       const c2=Auto.cfg(); c2.lastWeekly=Day.idx(); Auto.save(c2); P.lastReport=Date.now(); Prof.save(); } }
 };
@@ -226,7 +242,7 @@ Screens.parent=function(r){
     sc.appendChild(U.h('p',{class:'muted'},'Последняя отправка: '+(c.lastSent?Report.fmt(new Date(c.lastSent))+' в '+U.pad(new Date(c.lastSent).getHours())+':'+U.pad(new Date(c.lastSent).getMinutes()):'ещё не было')+'. В очереди: '+Auto.pending()+'.'+(c.lastErr?' Последняя ошибка: '+c.lastErr+'.':'')));
     const row=U.h('div',{class:'grid2'});
     row.appendChild(U.h('button',{class:'btn soft',type:'button',onclick:()=>{ Auto.push('🔔 Проверка связи: English 30 на планшете ('+P.name+') может писать в этот чат.'); U.toast('Сообщение поставлено в очередь'); setTimeout(()=>App.render(),1500); }},'Тестовое сообщение'));
-    row.appendChild(U.h('button',{class:'btn soft',type:'button',onclick:async()=>{ const rep=Report.build(null); const code=await Report.encode(rep); Auto.push(Report.summaryText(rep)+'\n'+SITE_URL+'#r='+code); U.toast('Отчёт поставлен в очередь'); setTimeout(()=>App.render(),1500); }},'Отчёт сейчас'));
+    row.appendChild(U.h('button',{class:'btn soft',type:'button',onclick:async()=>{ const rep=Report.build(null); const code=await Report.encode(rep); Auto.push(Report.summaryText(rep)+'\n'+SITE_URL+'#r='+code); U.toast('Отчёт поставлен в очередь'); setTimeout(()=>App.render(),1500); }},'Полный отчёт в Telegram'));
     sc.appendChild(row);
     const daily=U.h('input',{type:'checkbox',checked:!!c.daily,style:'width:22px;height:22px'}); daily.onchange=()=>{ const x=Auto.cfg(); x.daily=daily.checked; Auto.save(x); };
     const weekly=U.h('input',{type:'checkbox',checked:!!c.weekly,style:'width:22px;height:22px'}); weekly.onchange=()=>{ const x=Auto.cfg(); x.weekly=weekly.checked; Auto.save(x); Session.replanIfFresh(); };
@@ -272,3 +288,42 @@ Screens.parent=function(r){
     Auto._unlocked=false; Auto.push('🔔 English 30 подключён ('+P.name+'). '+(d1.checked?'Буду присылать короткое сообщение после каждого занятия':'')+(d1.checked&&d2.checked?' и ':'')+(d2.checked?'раз в неделю — отчёт с оценкой':'')+'.');
     Session.replanIfFresh(); U.toast('Автоотправка включена'); App.render(); };
 };
+
+/* ---------- Полный отчёт: разделы «за всё время» ---------- */
+Report.renderAll=function(wrap,rep){ const t=Report.totals(rep); const st=rep.st;
+  const c=U.h('div',{class:'card'}); c.appendChild(U.h('h3',{style:'margin-top:0'},'За всё время'));
+  c.appendChild(U.h('p',{class:'muted',style:'margin-top:-4px'},'С '+Report.fmt(Report.dateOf(rep.since,0))+': '+t.span+' '+U.plural(t.span,'день','дня','дней')+', из них с занятиями — '+t.act+'.'));
+  c.appendChild(U.h('div',{class:'grid3'},App.stat(t.done,'занятий выполнено'),App.stat(Report.hrs(t.min),'общее время'),App.stat(t.n,'заданий решено'),App.stat(t.n?Math.round(t.ok/t.n*100)+' %':'—','верно сразу'),App.stat(st[1],'лучшая серия дней'),App.stat(t.nw||st[4],t.nw?'новых слов':'слов в работе')));
+  wrap.appendChild(c);
+  if(rep.wk.length<2) return;
+  const wc=U.h('div',{class:'card'}); wc.appendChild(U.h('h3',{style:'margin-top:0'},'По неделям'));
+  const wks=rep.wk.slice(-16); const max=Math.max(rep.goal*7,...wks.map(e=>e[0])); const bars=U.h('div',{class:'rbars'});
+  wks.forEach((e,i)=>{ const end=Report.dateOf(rep.d,-7*(wks.length-1-i)); const start=Report.dateOf(rep.d,-7*(wks.length-1-i)-6); const col=U.h('div',{class:'rb'+(i===wks.length-1?' cur':'')});
+    col.appendChild(U.h('span',{class:'v'},e[0]?Report.hrs(e[0]).replace(' мин','м').replace(' ч','ч'):'')); col.appendChild(U.h('i',{style:'height:'+Math.max(e[0]?4:2,Math.round(e[0]/max*70))+'px',class:e[4]>=5?'done':''}));
+    col.appendChild(U.h('span',{class:'l'},String(start.getDate()))); col.appendChild(U.h('span',{class:'l2'},['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'][start.getMonth()])); bars.appendChild(col); });
+  wc.appendChild(bars); wc.appendChild(U.h('div',{class:'legend',style:'margin-top:6px'},U.h('span',{class:'blk o'},'5+ занятий за неделю'),U.h('span',{class:'blk s'},'меньше 5')));
+  const tb=U.h('div',{class:'rweeks'}); tb.appendChild(U.h('div',{class:'rw h'},U.h('span',null,'Неделя'),U.h('span',null,'Дней'),U.h('span',null,'Время'),U.h('span',null,'Точность'),U.h('span',null,'Слов')));
+  rep.wk.slice(-8).map((e,i,arr)=>({e,k:arr.length-1-i})).reverse().forEach(({e,k})=>{ const s=Report.dateOf(rep.d,-7*k-6), en=Report.dateOf(rep.d,-7*k);
+    tb.appendChild(U.h('div',{class:'rw'},U.h('span',null,s.getDate()+'.'+U.pad(s.getMonth()+1)+'–'+en.getDate()+'.'+U.pad(en.getMonth()+1)),U.h('span',null,e[3]+' / 7'),U.h('span',null,Report.hrs(e[0])),U.h('span',null,e[1]?Math.round(e[2]/e[1]*100)+' %':'—'),U.h('span',null,e[5]?'+'+e[5]:'—'))); });
+  wc.appendChild(tb); wrap.appendChild(wc); };
+Report.grammarMap=function(rep){ const by={}; rep.g.forEach(x=>by[x[0]]=x); const box=U.h('div');
+  const map=U.h('div',{class:'gmap'}); GRAMMAR.forEach((u,i)=>{ const x=by[i]; const cls=x&&x[2]?'done':i===rep.cu?'cur':x?'wip':''; map.appendChild(U.h('span',{class:'gc '+cls,title:u.title+(x?' — '+x[1]+' %':'')},String(i+1))); });
+  box.appendChild(map); box.appendChild(U.h('div',{class:'legend',style:'margin:6px 0 10px'},U.h('span',{class:'gc done'},'✓'),' пройдена ',U.h('span',{class:'gc cur'},'•'),' сейчас ',U.h('span',{class:'gc wip'},'…'),' начата ',U.h('span',{class:'gc'},' '),' впереди'));
+  const done=rep.g.filter(x=>x[2]).sort((a,b)=>a[0]-b[0]); if(done.length){ const d=U.h('details',null,U.h('summary',null,'Пройденные темы: '+done.length+' из '+GRAMMAR.length)); const l=U.h('ul',{class:'rlist'}); done.forEach(x=>{ const u=GRAMMAR[x[0]]; if(u) l.appendChild(U.h('li',null,(x[0]+1)+'. '+u.title+' — '+x[1]+' %')); }); d.appendChild(l); box.appendChild(d); }
+  return box; };
+Report.renderThemes=function(wrap,rep){ const rows=VOCAB.map((t,i)=>({t,v:rep.th[i]||[0,0],n:Content.byTheme[t.id].length})); const started=rows.filter(r=>r.v[0]>0);
+  const c=U.h('div',{class:'card'}); c.appendChild(U.h('h3',{style:'margin-top:0'},'Слова по темам'));
+  if(!started.length){ c.appendChild(U.h('p',{class:'muted'},'Пока нет данных.')); wrap.appendChild(c); return; }
+  started.forEach(r=>{ const p=Math.round(r.v[0]/r.n*100); c.appendChild(U.h('div',{class:'row nowrap',style:'margin:6px 0;gap:8px'},U.h('div',{style:'width:24px;flex:none'},r.t.icon),U.h('div',{class:'grow',style:'min-width:0'},U.h('div',{style:'font-size:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'},r.t.title),U.h('div',{class:'bar'},U.h('i',{style:'width:'+p+'%'}))),U.h('div',{class:'muted',style:'white-space:nowrap;font-size:13px;text-align:right'},r.v[0]+' / '+r.n,U.h('br'),'уверенно '+r.v[1]))); });
+  const left=rows.length-started.length; if(left) c.appendChild(U.h('p',{class:'muted',style:'margin-bottom:0'},'Впереди ещё '+left+' '+U.plural(left,'тема','темы','тем')+'.'));
+  wrap.appendChild(c); };
+Report.renderChecks=function(wrap,rep){ const c=U.h('div',{class:'card'}); c.appendChild(U.h('h3',{style:'margin-top:0'},'Проверки без подсказок'));
+  const l=U.h('ul',{class:'rlist'}); rep.ch.slice().reverse().forEach(x=>{ const d=Report.dateOf(rep.d,-x[0]); const p=x[2]?x[1]/x[2]:0; l.appendChild(U.h('li',null,Report.fmt(d)+': ',U.h('b',null,Report.num(x[1])+' из '+x[2]),' ('+Math.round(p*100)+' %)'+(x[3]>1?' · попытка '+x[3]:''))); });
+  c.appendChild(l); wrap.appendChild(c); };
+
+/* ---------- Экран «Полный отчёт» на планшете: так отчёт выглядит у папы ---------- */
+Screens.full=function(r){ r.appendChild(App.back('more','Ещё'));
+  const bar=U.h('div',{class:'card tight'}); const send=U.h('button',{class:'btn pri',type:'button'},Auto.on()?'📨 Отправить папе в Telegram':'📨 Отправить папе');
+  send.onclick=async()=>{ send.disabled=true; try{ if(Auto.on()){ const rep=Report.build(null); const code=await Report.encode(rep); Auto.push(Report.summaryText(rep)+'\n'+SITE_URL+'#r='+code); P.lastReport=Date.now(); Prof.save(); U.toast('Отчёт отправляется в Telegram'); } else await Report.share(null,r); } finally { send.disabled=false; } };
+  bar.appendChild(U.h('div',{class:'row between'},U.h('div',{class:'muted'},'Так отчёт выглядит у папы.'),send)); r.appendChild(bar);
+  const wrap=U.h('div',{class:'report'}); r.appendChild(wrap); Report.render(wrap,JSON.parse(JSON.stringify(Report.build(null)))); };
