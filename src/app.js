@@ -84,57 +84,72 @@ Screens.placementResult=function(sess){ const items=sess.blocks[0].items; const 
 
 /* ---------- Сегодня ---------- */
 Screens.home=function(r){
-  const t=Prof.today(); const goal=P.settings.goal; const min=Math.floor(t.sec/60); const pct=Math.min(100,Math.round(t.sec/(goal*60)*100));
+  const s=Session.ensurePlan();
+  const total=s.blocks.reduce((a,b)=>a+b.items.length,0), done=s.finished?total:s.blocks.reduce((a,b)=>a+(b.done?b.items.length:b.i),0);
+  const pct=total?Math.round(done/total*100):0; const fresh=Session.untouched(s);
   r.appendChild(U.h('div',{class:'row between',style:'margin-top:16px'},U.h('div',null,U.h('h1',{style:'margin:0'},'Привет, '+P.name+'!'),U.h('div',{class:'muted'},App.dateStr())),U.h('div',{class:'pill'},'🔥 '+P.streak+' '+U.plural(P.streak,'день','дня','дней'))));
-  const card=U.h('div',{class:'card center'}); card.appendChild(App.ring(pct,min+' мин','из '+goal));
-  const s=P.session; const resumable=s&&s.date===Day.key()&&!s.finished&&!s.free;
-  if(t.done) card.appendChild(U.h('p',null,'✅ Занятие на сегодня выполнено. Хочешь ещё — загляни в «Практику».'));
-  const btn=U.h('button',{class:'btn pri big',type:'button',style:'margin-top:12px'},resumable?'Продолжить занятие ▶':(t.done?'Ещё одно занятие ▶':'Начать занятие ▶')); btn.onclick=()=>Session.startDaily(!resumable); card.appendChild(btn); App._enter=btn;
-  if(resumable) card.appendChild(U.h('div',{class:'muted',style:'margin-top:8px'},'Блок '+(s.bi+1)+' из '+s.blocks.length+': '+s.blocks[s.bi].icon+' '+s.blocks[s.bi].title));
+  const card=U.h('div',{class:'card center'}); card.appendChild(s.finished?App.ring(100,'Готово','занятие выполнено'):App.ring(pct,done+' из '+total,'заданий'));
+  if(s.finished) card.appendChild(U.h('p',null,'✅ Занятие на сегодня выполнено. Хочешь ещё — начни новое или загляни в «Практику».'));
+  const btn=U.h('button',{class:'btn pri big',type:'button',style:'margin-top:12px'},s.finished?'Ещё одно занятие ▶':(fresh?'Начать занятие ▶':'Продолжить занятие ▶'));
+  btn.onclick=()=>{ if(s.finished){ P.session=Planner.build(); Prof.save(); } Session.startDaily(); }; card.appendChild(btn); App._enter=btn;
+  if(!fresh&&!s.finished){ const b=s.blocks[s.bi]; card.appendChild(U.h('div',{class:'muted',style:'margin-top:8px'},'Блок '+(s.bi+1)+' из '+s.blocks.length+': '+b.icon+' '+b.title+' · задание '+Math.min(b.i+1,b.items.length)+' из '+b.items.length)); }
   r.appendChild(card);
   const inst=PWA.card(); if(inst) r.appendChild(inst);
-  const unit=Planner.currentUnit(); const theme=Planner.currentTheme(); const due=SRS.dueCount(); const known=Planner.knownWords().length; const sessions=Object.values(P.days).filter(d=>d.done).length;
-  const plan=U.h('div',{class:'card plan'}); plan.appendChild(U.h('h3',{style:'margin-top:0'},'План на сегодня · '+goal+' минут'));
-  const steps=[]; if(due||known) steps.push(['🔁','Повторение',due?due+' '+U.plural(due,'карточка','карточки','карточек')+' по памяти':'разминка на знакомых словах',5]);
-  steps.push(['🧱','Грамматика: '+unit.title,'тема '+unit.n+' из '+GRAMMAR.length+(P.units[unit.id]&&P.units[unit.id].seen?' · освоение '+Planner.unitProg(unit.id)+'%':' · новое правило'),8],[theme?theme.icon:'🗂️','Слова: '+(theme?theme.title:'повторение'),theme?'6 новых слов и 2 фразы':'все темы пройдены — закрепляем',7],['✍️','Правописание','диктант, пропущенные буквы, анаграммы',4]);
-  if(sessions%3===2) steps.push(['📖','Чтение','короткий текст и вопросы',3]);
-  steps.push(['🎤','Говорение','повтор за диктором, фразы вслух, диалог',5]);
-  steps.forEach(st=>plan.appendChild(U.h('div',{class:'step'},U.h('div',{class:'ic'},st[0]),U.h('div',{class:'grow'},U.h('div',{class:'t'},st[1]),U.h('div',{class:'muted'},st[2])),U.h('div',{class:'m'},st[3]+' мин'))));
-  r.appendChild(plan);
-  const sure=Content.wordList.filter(w=>P.cards[w.key]&&P.cards[w.key].s>=3).length; const unitsDone=GRAMMAR.filter(u=>Planner.unitDone(u.id)).length;
+  if(!s.finished){ const plan=U.h('div',{class:'card plan'}); const mins=Math.max(1,Math.round(Planner.estSum([].concat(...s.blocks.map(b=>b.items)))/60));
+    plan.appendChild(U.h('h3',{style:'margin-top:0'},'План на сегодня · '+total+' '+U.plural(total,'задание','задания','заданий')+' · около '+mins+' мин'));
+    if(s.lvl) plan.appendChild(U.h('div',{class:'muted',style:'margin:-4px 0 6px'},'Сложность: '+LEVELS[s.lvl]+((P.settings.level||'auto')==='auto'?' (подбирается сама по точности)':'')));
+    s.blocks.forEach(b=>{ const st=U.h('div',{class:'step'+(b.done?' done':'')}); st.appendChild(U.h('div',{class:'ic'},b.icon));
+      st.appendChild(U.h('div',{class:'grow'},U.h('div',{class:'t'},b.title),U.h('div',{class:'muted'},Session.blockSub(b))));
+      st.appendChild(U.h('div',{class:'m'},b.items.length+' · ≈'+Math.max(1,Math.round(Planner.estSum(b.items)/60))+' мин')); plan.appendChild(st); });
+    plan.appendChild(U.h('p',{class:'muted',style:'margin-bottom:0'},'Таймера нет: сделал все задания — занятие закончено.'));
+    r.appendChild(plan); }
+  const known=Planner.knownWords().length; const sure=Content.wordList.filter(w=>P.cards[w.key]&&P.cards[w.key].s>=3).length; const unitsDone=GRAMMAR.filter(u=>Planner.unitDone(u.id)).length;
   r.appendChild(U.h('div',{class:'grid3'},App.stat(known,'слов в работе'),App.stat(sure,'слов уверенно'),App.stat(unitsDone,'тем грамматики')));
   r.appendChild(U.h('p',{class:'muted center',style:'margin-top:16px'},'💡 '+App.tip()));
 };
 
-/* ---------- Занятие ---------- */
+/* ---------- Занятие: конечный список заданий, без таймера ---------- */
 const Session = {
-  s:null, host:null, timer:null, opts:null, body:null, fbEl:null, tmEl:null, progEl:null,
-  startDaily(fresh){ if(fresh||!P.session||P.session.date!==Day.key()||P.session.finished||P.session.free){ P.session=Planner.build(); } Session.s=P.session; Session.opts=null; Prof.save(); App.go('session'); },
-  runFree(block,opts){ if(!block){ U.toast('Нечего тренировать'); return; } Object.assign(block,{i:0,spent:0,done:false,n:0,ok:0}); Session.s={date:Day.key(),bi:0,blocks:[block],started:Date.now(),finished:false,n:0,ok:0,xp:0,free:true}; Session.opts=opts||null; App.go('session'); },
-  reviewBlock(){ const due=SRS.due('w:').concat(SRS.due('c:')).slice(0,30); let items=due.map(k=>Planner.itemFor(k)); if(items.length<6) items=items.concat(U.pick(Planner.knownWords().filter(w=>!due.includes(w.key)),10-items.length).map(w=>Planner.itemFor(w.key))); if(!items.length) items=U.pick(Content.wordList,8).map(w=>Planner.wordEx(w.key,'wchoice')); return {id:'review',title:'Повторение',icon:'🔁',sec:600,items:U.shuffle(items.filter(Boolean)),more:'review'}; },
+  s:null, host:null, timer:null, opts:null, body:null, fbEl:null, cntEl:null, progEl:null, t0:0,
+  todayPlan(){ const s=P.session; return s&&s.date===Day.key()&&!s.free?s:null; },
+  untouched(s){ return !s.finished&&s.bi===0&&s.blocks.every(b=>!b.i&&!b.done); },
+  /* план на сегодня; старый план прежней версии (с таймерами), к которому ещё не приступали, заменяем новым */
+  ensurePlan(){ let s=Session.todayPlan(); if(!s||(!s.v&&Session.untouched(s))){ s=P.session=Planner.build(); Prof.save(); } return s; },
+  replanIfFresh(){ const s=Session.todayPlan(); if(!s||Session.untouched(s)){ P.session=Planner.build(); Prof.save(); return true; } return false; },
+  blockSub(b){ const n=b.items.length;
+    switch(b.id){
+      case 'review': return 'слова и фразы, которые пора вспомнить';
+      case 'grammar': { const u=Content.units[b.unit]; if(!u) return n+' заданий'; const us=P.units[u.id]; return u.title+(us&&us.seen?' · освоение '+Planner.unitProg(u.id)+'%':' · новое правило'); }
+      case 'vocab': return b.newW!=null?(b.newW?b.newW+' '+U.plural(b.newW,'новое слово','новых слова','новых слов'):'закрепление')+(b.newC?' и '+b.newC+' '+U.plural(b.newC,'фраза','фразы','фраз'):''):'слова';
+      case 'spell': return 'диктант, пропущенные буквы, предложения на слух';
+      case 'read': return 'короткий текст и вопросы';
+      case 'speak': return 'фразы вслух'+(b.dialog?', диалог «'+b.dialog+'»':'');
+    } return n+' заданий'; },
+  startDaily(){ Session.s=Session.ensurePlan(); Session.opts=null; Prof.save(); App.go('session'); },
+  runFree(block,opts){ if(!block||!block.items||!block.items.filter(Boolean).length){ U.toast('Нечего тренировать'); return; } block.items=block.items.filter(Boolean); Object.assign(block,{i:0,spent:0,done:false,n:0,ok:0,rq:0}); Session.s={date:Day.key(),bi:0,blocks:[block],created:Date.now(),finished:false,n:0,ok:0,xp:0,free:true}; Session.opts=opts||null; App.go('session'); },
+  reviewBlock(){ const lvl=Planner.level(); const due=SRS.due('w:').concat(SRS.due('c:')).slice(0,30); let items=due.map(k=>Planner.itemFor(k,lvl)); if(items.length<6) items=items.concat(U.pick(Planner.knownWords().filter(w=>!due.includes(w.key)),10-items.length).map(w=>Planner.itemFor(w.key,lvl))); if(!items.length) items=U.pick(Content.wordList,8).map(w=>Planner.wordEx(w.key,'wchoice',lvl)); return {id:'review',title:'Повторение',icon:'🔁',items:U.shuffle(items.filter(Boolean))}; },
   cur(){ return Session.s.blocks[Session.s.bi]; },
-  render(r){ if(!Session.s){ if(P.session&&P.session.date===Day.key()&&!P.session.finished&&!P.session.free) Session.s=P.session; else { App.go('home'); return; } }
+  render(r){ if(!Session.s){ const tp=Session.todayPlan(); if(tp&&!tp.finished) Session.s=tp; else { App.go('home'); return; } }
     const s=Session.s; Session.host=r; if(s.finished){ Session.summary(); return; } const b=Session.cur();
-    const top=U.h('div',{class:'topbar'}); const exitBtn=U.h('button',{class:'btn icon',type:'button',title:'Выйти'},'✕'); exitBtn.onclick=()=>Session.exit();
-    const prog=U.h('div',{class:'prog'},U.h('i',{style:'width:'+Math.round(b.i/Math.max(1,b.items.length)*100)+'%'})); const tm=U.h('div',{class:'timer'},U.mmss(b.sec-b.spent)); Session.tmEl=tm; Session.progEl=prog;
-    top.appendChild(U.h('div',{class:'row nowrap'},U.h('span',{style:'font-size:22px'},b.icon),U.h('b',{class:'grow',style:'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},b.title),tm,exitBtn));
+    const top=U.h('div',{class:'topbar'}); const exitBtn=U.h('button',{class:'btn icon',type:'button',title:'Выйти (прогресс сохранится)'},'✕'); exitBtn.onclick=()=>Session.exit();
+    const prog=U.h('div',{class:'prog'},U.h('i',{style:'width:0%'})); const cnt=U.h('div',{class:'timer',title:'задание в блоке'},''); Session.cntEl=cnt; Session.progEl=prog;
+    top.appendChild(U.h('div',{class:'row nowrap'},U.h('span',{style:'font-size:22px'},b.icon),U.h('b',{class:'grow',style:'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},b.title),cnt,exitBtn));
     top.appendChild(prog); const bl=U.h('div',{class:'blocks'}); s.blocks.forEach((x,i)=>bl.appendChild(U.h('i',{class:i<s.bi?'done':i===s.bi?'cur':''}))); top.appendChild(bl); r.appendChild(top);
     Session.body=U.h('div'); r.appendChild(Session.body); Session.fbEl=U.h('div'); r.appendChild(Session.fbEl);
     Session.startTimer(); Session.showItem(); },
   showItem(){ const b=Session.cur(); Session.fbEl.innerHTML=''; App._enter=null;
-    if(b.spent>=b.sec&&b.i>0){ Session.finishBlock(); return; }
-    if(b.i>=b.items.length){ const left=b.sec-b.spent; if(left>45&&b.more&&!b.noMore){ const extra=Planner.more(b).filter(Boolean); if(extra.length) b.items.push(...extra); else b.noMore=true; }
-      if(b.i>=b.items.length){ Session.finishBlock(); return; } }
-    const it=b.items[b.i]; Session.progEl.firstChild.style.width=Math.round(b.i/Math.max(1,b.items.length)*100)+'%';
-    Ex.render(it,Session.body,{done:res=>Session.onDone(it,res)}); },
+    if(b.i>=b.items.length){ Session.finishBlock(); return; }
+    const it=b.items[b.i]; Session.progEl.firstChild.style.width=Math.round(b.i/Math.max(1,b.items.length)*100)+'%'; Session.cntEl.textContent=(b.i+1)+' / '+b.items.length;
+    Session.t0=Date.now(); Ex.render(it,Session.body,{done:res=>Session.onDone(it,res)}); },
   onDone(it,res){ const s=Session.s, b=Session.cur(); const t=Prof.today(); it._ok=res.ok; it._g=res.grade; let xp=0; const graded=res.grade!=null;
     if(graded){ const ok=res.ok===true; b.n++; s.n++; t.n++; if(ok){ b.ok++; s.ok++; t.ok++; } xp=ok?10:res.ok==='almost'?6:2;
       if(it.key) SRS.grade(it.key,res.grade);
-      if(it.unit&&!it.placement&&Planner.GRAM_TYPES.includes(it.t)){ const u=P.units[it.unit]||(P.units[it.unit]={h:[],seen:true}); u.h=(u.h||[]).concat(ok||res.ok==='almost'?1:0).slice(-30); u.last=Day.idx(); u.n=(u.n||0)+1; if(ok) u.ok=(u.ok||0)+1; } }
+      if(it.unit&&!it.placement&&Planner.GRAM_TYPES.includes(it.t)){ const u=P.units[it.unit]||(P.units[it.unit]={h:[],seen:true}); u.h=(u.h||[]).concat(ok||res.ok==='almost'?1:0).slice(-30); u.last=Day.idx(); u.n=(u.n||0)+1; if(ok) u.ok=(u.ok||0)+1;
+        if(it.di&&!it._re){ u.sh=u.sh||{}; u.sh[it.di]=(u.sh[it.di]||0)+1; } } }
     else xp=res.perKey?8:3;
     if(res.perKey) for(const k in res.perKey) SRS.grade(k,res.perKey[k]);
-    const requeue=graded&&res.grade===0&&!it._re&&!b.noRequeue&&it.t!=='read'&&it.t!=='dialog';
-    if(requeue){ const copy=Object.assign({},it,{_re:true,_hint:false,_ok:null,_g:null}); b.items.splice(Math.min(b.items.length,b.i+4),0,copy); }
+    const requeue=graded&&res.grade===0&&!it._re&&!b.noRequeue&&it.t!=='read'&&it.t!=='dialog'&&(b.rq||0)<3;
+    if(requeue){ b.rq=(b.rq||0)+1; const copy=Object.assign({},it,{_re:true,_hint:false,_ok:null,_g:null}); b.items.splice(Math.min(b.items.length,b.i+4),0,copy); }
     s.xp+=xp; t.xp+=xp; P.xp+=xp; if(!s.free) P.session=s; Prof.save();
     if(!graded&&!res.perKey){ Session.next(); return; }
     const fb=Session.fbEl; fb.innerHTML=''; const cls=res.ok===true?'ok':res.ok==='almost'?'warn':'bad'; const box=U.h('div',{class:'fb '+cls+' fade'});
@@ -145,24 +160,23 @@ const Session = {
     if(requeue) box.appendChild(U.h('div',{class:'why'},'↩ Это задание вернётся через несколько шагов.'));
     fb.appendChild(box); const next=U.h('button',{class:'btn pri big',type:'button'},'Дальше →'); next.onclick=()=>Session.next(); fb.appendChild(U.h('div',{class:'actions'},next)); App._enter=next;
     if(document.activeElement&&document.activeElement.blur) document.activeElement.blur(); },
-  next(){ Session.cur().i++; Session.showItem(); },
+  next(){ const b=Session.cur(); const it=b.items[b.i]; if(it&&Session.t0&&!document.hidden) Planner.recordPace(it,(Date.now()-Session.t0)/1000); Session.t0=0; b.i++; if(!Session.s.free) P.session=Session.s; Session.showItem(); },
   finishBlock(){ const s=Session.s, b=Session.cur(); b.done=true; s.xp+=20; Prof.today().xp+=20; P.xp+=20; Session.stopTimer(); const acc=b.n?Math.round(b.ok/b.n*100):null;
     const r=Session.host; r.innerHTML=''; const card=U.h('div',{class:'card center fade'}); card.appendChild(U.h('div',{class:'confetti'},b.icon)); card.appendChild(U.h('h2',null,'Блок «'+b.title+'» готов'));
-    card.appendChild(U.h('div',{class:'grid3'},App.stat(U.mmss(b.spent),'время'),App.stat(b.n,'заданий'),App.stat(acc==null?'—':acc+'%','точность')));
+    card.appendChild(U.h('div',{class:'grid3'},App.stat(b.n,'заданий'),App.stat(b.ok,'верно сразу'),App.stat(acc==null?'—':acc+'%','точность')));
     let btn;
-    if(s.bi<s.blocks.length-1){ const nb=s.blocks[s.bi+1]; card.appendChild(U.h('p',{class:'muted'},'Дальше: '+nb.icon+' '+nb.title+' · '+Math.round(nb.sec/60)+' мин')); btn=U.h('button',{class:'btn pri big',type:'button'},'Продолжить →'); btn.onclick=()=>{ s.bi++; if(!s.free) P.session=s; Prof.save(); App.render(); }; }
-    else { s.finished=true; if(!s.free){ P.session=s; Prof.markDone(); } btn=U.h('button',{class:'btn pri big',type:'button'},'Итоги →'); btn.onclick=()=>Session.summary(); }
+    if(s.bi<s.blocks.length-1){ const nb=s.blocks[s.bi+1]; card.appendChild(U.h('p',{class:'muted'},'Дальше: '+nb.icon+' '+nb.title+' · '+nb.items.length+' '+U.plural(nb.items.length,'задание','задания','заданий'))); btn=U.h('button',{class:'btn pri big',type:'button'},'Продолжить →'); btn.onclick=()=>{ s.bi++; if(!s.free) P.session=s; Prof.save(); App.render(); }; }
+    else { s.finished=true; if(!s.free){ P.session=s; Prof.markDone(); if(s.blocks.some(x=>x.items.some(it=>it&&it.t==='dialog'))) P.dlgIdx=(P.dlgIdx||0)+1; } btn=U.h('button',{class:'btn pri big',type:'button'},'Итоги →'); btn.onclick=()=>Session.summary(); }
     card.appendChild(U.h('div',{class:'actions'},btn)); App._enter=btn; r.appendChild(card); if(!s.free) P.session=s; Prof.save(); },
-  summary(){ const s=Session.s; Session.stopTimer(); const r=Session.host||App.root; r.innerHTML=''; const spent=s.blocks.reduce((a,b)=>a+b.spent,0); const acc=s.n?Math.round(s.ok/s.n*100):null;
+  summary(){ const s=Session.s; Session.stopTimer(); const r=Session.host||App.root; r.innerHTML=''; const spent=s.blocks.reduce((a,b)=>a+(b.spent||0),0); const acc=s.n?Math.round(s.ok/s.n*100):null;
     const card=U.h('div',{class:'card center fade'}); card.appendChild(U.h('div',{class:'confetti'},s.free?'🎯':'🏆')); card.appendChild(U.h('h2',null,s.free?'Тренировка завершена':'Занятие выполнено!'));
-    card.appendChild(U.h('div',{class:'grid3'},App.stat(Math.round(spent/60)+' мин','время'),App.stat(s.n,'заданий'),App.stat(acc==null?'—':acc+'%','точность')));
+    card.appendChild(U.h('div',{class:'grid3'},App.stat(s.n,'заданий'),App.stat(acc==null?'—':acc+'%','точность'),App.stat(Math.max(1,Math.round(spent/60))+' мин','заняло')));
     card.appendChild(U.h('p',null,'+'+s.xp+' XP'+(s.free?'':' · серия 🔥 '+P.streak+' '+U.plural(P.streak,'день','дня','дней'))));
-    if(!s.free){ const unit=Planner.currentUnit(); card.appendChild(U.h('p',{class:'muted'},'Завтра: '+unit.icon+' '+unit.title+' · '+SRS.dueCountTomorrow()+' '+U.plural(SRS.dueCountTomorrow(),'карточка','карточки','карточек')+' к повторению.')); }
+    if(!s.free){ const unit=Planner.currentUnit(); const dt=SRS.dueCountTomorrow(); card.appendChild(U.h('p',{class:'muted'},'Завтра: '+unit.icon+' '+unit.title+' · '+dt+' '+U.plural(dt,'карточка','карточки','карточек')+' к повторению.')); }
     const btn=U.h('button',{class:'btn pri big',type:'button'},'Готово'); btn.onclick=()=>{ const o=Session.opts; const free=s.free; Session.s=null; Session.opts=null; if(o&&o.onEnd) o.onEnd(s); else App.go(free?'practice':'home'); }; card.appendChild(U.h('div',{class:'actions'},btn)); App._enter=btn; r.appendChild(card); },
   exit(){ Session.stopTimer(); Prof.save(); const s=Session.s; Session.s=null; Session.opts=null; App.go(s&&s.free?'practice':'home'); },
-  startTimer(){ Session.stopTimer(); Session.timer=setInterval(()=>{ if(document.hidden) return; const s=Session.s; if(!s||s.finished) return; const b=s.blocks[s.bi]; if(!b||b.done) return; b.spent++; const t=Prof.today(); t.sec++;
-      if(Session.tmEl) Session.tmEl.textContent=U.mmss(b.sec-b.spent); if(b.spent===b.sec) U.toast('Время блока вышло — закончим это задание'); if(b.spent%15===0) Prof.save();
-      if(!t.done&&t.sec>=P.settings.goal*60){ Prof.markDone(); Prof.save(); U.toast('🔥 Цель дня выполнена!'); } },1000); },
+  /* время считается только для статистики («Прогресс» и итог занятия): на экране его нет, и оно ничего не ограничивает */
+  startTimer(){ Session.stopTimer(); Session.timer=setInterval(()=>{ if(document.hidden) return; const s=Session.s; if(!s||s.finished) return; const b=s.blocks[s.bi]; if(!b||b.done) return; b.spent=(b.spent||0)+1; const t=Prof.today(); t.sec++; if(t.sec%15===0) Prof.save(); },1000); },
   stopTimer(){ if(Session.timer){ clearInterval(Session.timer); Session.timer=null; } }
 };
 Screens.session=r=>Session.render(r);
@@ -211,19 +225,19 @@ Screens.stats=function(r){ r.appendChild(U.h('h1',null,'📈 Прогресс'))
   if(!any) gc.appendChild(U.h('p',{class:'muted'},'Пока нет данных — начни первое занятие.')); r.appendChild(gc); };
 
 /* ---------- Ещё ---------- */
-App.ABOUT=`<p><b>Почему 30 минут и несколько блоков.</b> Внимание на одном типе задачи держится 5–8 минут. Смена блоков (повторение → грамматика → слова → письмо → речь) — это чередование, оно даёт более прочную память, чем час одного и того же.</p>
+App.ABOUT=`<p><b>Почему так устроено занятие.</b> Занятие — готовый список заданий, рассчитанный примерно на выбранное время по твоему реальному темпу. Таймера нет: сделал все задания — занятие закончено. Внимание на одном типе задачи держится 5–8 минут, поэтому задания разбиты на блоки разных навыков: повторение → грамматика → слова → письмо → речь. Такое чередование даёт более прочную память, чем час одного и того же.</p>
 <ul>
 <li><b>Интервальное повторение.</b> Каждое слово и фраза — карточка. Верный ответ отодвигает следующий показ (1 → 3 → 7 → 14 дней…), ошибка возвращает карточку на сегодня. Алгоритм семейства SM-2, как в Anki.</li>
 <li><b>Активное вспоминание.</b> Правило показывается один раз, дальше — только задания. Память крепнет в момент извлечения, а не при перечитывании.</li>
-<li><b>Лестница сложности.</b> Слово проходит этапы: узнать (выбор) → вспомнить (напечатать) → использовать (сказать, перевести). Тип задания выбирается по этапу карточки.</li>
-<li><b>Ошибка как учитель.</b> После неверного ответа — правильный вариант, объяснение, и то же задание возвращается через несколько шагов. Опечатка засчитывается как «почти».</li>
+<li><b>Без повторов внутри занятия.</b> Каждое слово попадает только в один блок, каждый пример из правила используется один раз. Возвращается только задание, в котором была ошибка, и не больше трёх на блок.</li>
+<li><b>Лестница сложности.</b> Слово проходит этапы: узнать (выбор) → вспомнить (напечатать) → использовать (собрать предложение, сказать). Тип задания выбирается по этапу карточки и по уровню сложности.</li>
+<li><b>Уровень подстраивается.</b> При точности выше 88 % включается сложный уровень: больше письма и перевода, больше новых слов, задания «какое время?», где правило нужно выбрать самому. Если стало трудно, уровень снижается.</li>
+<li><b>Ошибка как учитель.</b> После неверного ответа — правильный вариант и объяснение. Опечатка засчитывается как «почти».</li>
 <li><b>Двойное кодирование.</b> Слово = картинка + звук + пример в контексте. Перевод — последним.</li>
 <li><b>Фразы-кирпичи.</b> «How much is it?» учится целиком, как говорят носители: так быстрее заговорить.</li>
-<li><b>Говорение с первого дня.</b> Повтор за диктором, ответ по-русски → вслух по-английски, диалоги с распознаванием речи. Проговаривание вслух само по себе улучшает запоминание.</li>
-<li><b>Понятный ввод.</b> Тексты и диалоги составлены так, чтобы почти все слова были знакомы, а новое — по чуть-чуть.</li>
+<li><b>Говорение с первого дня.</b> Повтор за диктором, перевод вслух, диалоги с распознаванием речи.</li>
 <li><b>Грамматика образами.</b> Цветные блоки «кто — действие — остальное», шкала времени, одна таблица на одно правило.</li>
-<li><b>Адаптивность.</b> Следующая тема грамматики открывается при точности выше 75 % по текущей. Слабые темы возвращаются вкраплениями.</li>
-<li><b>Привычка без давления.</b> Серия дней, цель по минутам, план на день виден заранее. Штрафов нет — только прогресс.</li>
+<li><b>Темп по успехам.</b> Тема грамматики закрывается при точности от 75 %; при точности от 90 % хватает одного занятия. Слабые темы возвращаются вкраплениями.</li>
 </ul>`;
 Screens.more=function(r){ r.appendChild(U.h('h1',null,'⚙️ Ещё'));
   const pc=U.h('div',{class:'card'}); pc.appendChild(U.h('h3',{style:'margin-top:0'},'Профиль')); const nameInp=U.h('input',{class:'inp',value:P.name,style:'font-size:18px',maxlength:'24'}); nameInp.onchange=()=>{ Prof.rename(nameInp.value.trim()||P.name); U.toast('Имя сохранено'); }; pc.appendChild(nameInp);
@@ -233,7 +247,9 @@ Screens.more=function(r){ r.appendChild(U.h('h1',null,'⚙️ Ещё'));
   let armed=false; const delBtn=U.h('button',{class:'btn sm ghost',style:'color:var(--bad)',type:'button'},'Удалить этот профиль'); delBtn.onclick=()=>{ if(!armed){ armed=true; delBtn.textContent='Точно удалить «'+P.name+'» со всем прогрессом? Нажми ещё раз'; setTimeout(()=>{ armed=false; delBtn.textContent='Удалить этот профиль'; },6000); return; } Prof.remove(P.id); if(P){ Theme.apply(); App.render(); } else App.go('onboard'); };
   pc.appendChild(U.h('div',{style:'margin-top:8px'},delBtn)); r.appendChild(pc);
   const sc=U.h('div',{class:'card'}); sc.appendChild(U.h('h3',{style:'margin-top:0'},'Настройки')); const row=(label,ctrl)=>U.h('div',{class:'row between nowrap',style:'margin:10px 0'},U.h('div',null,label),ctrl);
-  const goal=U.h('select',{class:'sel'}); [15,20,30,45,60].forEach(m=>goal.appendChild(U.h('option',{value:m,selected:P.settings.goal===m},m+' мин'))); goal.onchange=()=>{ P.settings.goal=+goal.value; Prof.save(); }; sc.appendChild(row('Цель в день',goal));
+  const goal=U.h('select',{class:'sel'}); [15,20,30,45,60].forEach(m=>goal.appendChild(U.h('option',{value:m,selected:P.settings.goal===m},'≈ '+m+' мин'))); goal.onchange=()=>{ P.settings.goal=+goal.value; Prof.save(); U.toast(Session.replanIfFresh()?'План на сегодня пересчитан':'Новая длина — со следующего занятия'); }; sc.appendChild(row('Длина занятия',goal));
+  const lv=U.h('select',{class:'sel'}); [['auto','Авто (сейчас: '+LEVELS[Planner.autoLevel()]+')'],['easy','Лёгкая'],['normal','Обычная'],['hard','Сложная']].forEach(x=>lv.appendChild(U.h('option',{value:x[0],selected:(P.settings.level||'auto')===x[0]},x[1]))); lv.onchange=()=>{ P.settings.level=lv.value; Prof.save(); U.toast(Session.replanIfFresh()?'План на сегодня пересчитан':'Новая сложность — со следующего занятия'); }; sc.appendChild(row('Сложность',lv));
+  sc.appendChild(U.h('p',{class:'muted',style:'margin-top:0'},'Сложная: меньше заданий с выбором ответа, больше письма и перевода, 8 новых слов в день, задания «какое время?», задания с ошибкой возвращаются. «Авто» включает её сама, когда точность выше 88 %.'));
   const voice=U.h('select',{class:'sel',style:'max-width:220px'}); voice.appendChild(U.h('option',{value:''},'авто')); Speech.voices.forEach(v=>voice.appendChild(U.h('option',{value:v.name,selected:P.settings.voice===v.name},v.name.replace(/Microsoft |Google /,'')+' · '+v.lang))); voice.onchange=()=>{ P.settings.voice=voice.value; Prof.save(); Speech.say('Hello! How are you today?'); }; sc.appendChild(row('Голос диктора',voice));
   const rate=U.h('input',{type:'range',min:'0.6',max:'1.1',step:'0.05',value:String(P.settings.rate)}); rate.onchange=()=>{ P.settings.rate=+rate.value; Prof.save(); Speech.say('Nice to meet you.'); }; sc.appendChild(row('Скорость речи',rate));
   const th=U.h('select',{class:'sel'}); [['auto','как в системе'],['light','светлая'],['dark','тёмная']].forEach(x=>th.appendChild(U.h('option',{value:x[0],selected:P.settings.theme===x[0]},x[1]))); th.onchange=()=>{ P.settings.theme=th.value; Prof.save(); Theme.apply(); }; sc.appendChild(row('Тема',th));

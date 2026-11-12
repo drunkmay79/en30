@@ -169,10 +169,33 @@ const Gen = {
   }
 };
 
-/* ---------- Планировщик занятия ---------- */
+/* ---------- Задания «какое время?» для смешанной практики ----------
+   Ученик сам выбирает время по слову-подсказке: usually → Present Simple, now → Continuous, yesterday → Past.
+   Включается, когда пройдены хотя бы два из трёх времён. */
+Gen.mix=function(avail){
+  const k=U.rnd(avail); const s=U.rnd(Gen.SUBJ.filter(x=>x[0]!=='The dog'&&x[0]!=='It'));
+  const verbs=k==='pc'?Gen.VERBS.filter(v=>!['like','live','get up','have'].includes(v[0])):Gen.VERBS; const v=U.rnd(verbs);
+  if(k==='ps'){ const a=s[2]==='does'?v[1]:v[0];
+    if(Math.random()<0.5){ const mk=U.rnd(['usually','often','always']); return {t:'gap',q:s[0]+' '+mk+' ___ ('+v[0]+') '+v[4]+'.',a:[a],unit:'ps_aff',why:'«'+mk+'» — привычка → Present Simple',mix:1}; }
+    const mk=U.rnd(['every day','on Sundays','every evening']); return {t:'gap',q:s[0]+' ___ ('+v[0]+') '+v[4]+' '+mk+'.',a:[a],unit:'ps_aff',why:'«'+mk+'» — привычка → Present Simple',mix:1}; }
+  if(k==='pc'){ const a=s[1]+' '+v[3];
+    if(Math.random()<0.4) return {t:'gap',q:'Look! '+s[0]+' ___ ('+v[0]+') '+v[4]+'.',a:[a],unit:'pc',why:'«Look!» — прямо сейчас → am / is / are + -ing',mix:1};
+    const mk=U.rnd(['now','at the moment','right now']); return {t:'gap',q:s[0]+' ___ ('+v[0]+') '+v[4]+' '+mk+'.',a:[a],unit:'pc',why:'«'+mk+'» — прямо сейчас → am / is / are + -ing',mix:1}; }
+  const mk=U.rnd(['yesterday','last week','two days ago','last Sunday']); return {t:'gap',q:s[0]+' ___ ('+v[0]+') '+v[4]+' '+mk+'.',a:[v[2]],unit:'past_irr',why:'«'+mk+'» — прошлое → Past Simple',mix:1};
+};
+
+/* ---------- Планировщик занятия ----------
+   Занятие — конечный список заданий примерно на P.settings.goal минут, без таймера.
+   Время задания оценивается по таблице EST, а по мере занятий — по реальному темпу ученика (P.pace).
+   Внутри занятия одно и то же задание не повторяется: слово попадает только в один блок,
+   пример из правила используется один раз; вернуться может только задание с ошибкой (не больше 3 на блок).
+   Сложность: easy / normal / hard, по умолчанию «авто» по точности последних дней. */
+const EST={choice:15,gap:22,build:35,tr:45,err:35,wchoice:12,cchoice:12,listen:14,wtype:22,letters:22,scramble:25,dict:22,dictS:45,match:50,card:14,lesson:180,recap:50,shadow:40,say:40,sayS:45,dialog:150,read:240};
+const LEVELS={easy:'лёгкая',normal:'обычная',hard:'сложная'};
 const Planner = {
-  /* освоение темы: точность последних ответов × «насыщенность» (нужно минимум ~14 ответов, то есть два занятия) */
-  unitProg(id){ const u=P.units[id]; if(!u||!u.h||!u.h.length) return 0; const h=u.h.slice(-20); const acc=h.reduce((a,b)=>a+b,0)/h.length; return Math.round(acc*100*Math.min(1,h.length/14)); },
+  /* освоение темы: точность последних ответов × «насыщенность». При точности от 90 % хватает 10 ответов
+     (тема закрывается за одно занятие), иначе нужно 14 (два занятия). */
+  unitProg(id){ const u=P.units[id]; if(!u||!u.h||!u.h.length) return 0; const h=u.h.slice(-20); const acc=h.reduce((a,b)=>a+b,0)/h.length; return Math.round(acc*100*Math.min(1,h.length/(acc>=0.9?10:14))); },
   GRAM_TYPES:['choice','gap','build','tr','err'],
   /* тема «закрыта» при 75 % и открывается заново, только если точность упала ниже 50 % */
   unitDone(id){ const u=P.units[id]; if(!u) return false; const p=Planner.unitProg(id); if(p>=75) u.done=true; if(u.done&&p<50) u.done=false; return !!u.done; },
@@ -181,95 +204,182 @@ const Planner = {
     seen.sort((a,b)=>(Planner.unitProg(a.id)-Planner.unitProg(b.id))||((P.units[a.id].last||0)-(P.units[b.id].last||0))); return seen.slice(0,n); },
   knownWords(){ return Content.wordList.filter(w=>{ const c=P.cards[w.key]; return c&&c.s>=1; }); },
   currentTheme(){ for(const t of VOCAB){ if(Content.byTheme[t.id].some(w=>!P.cards[w.key])) return t; } return null; },
-  newWords(n){ const t=Planner.currentTheme(); if(!t) return []; return Content.byTheme[t.id].filter(w=>!P.cards[w.key]).slice(0,n); },
+  /* новые слова по порядку тем; на стыке тем берём из следующей, чтобы не было «огрызков» по 2 слова */
+  newWords(n){ const out=[]; for(const t of VOCAB){ for(const w of Content.byTheme[t.id]){ if(out.length>=n) return out; if(!P.cards[w.key]) out.push(w); } } return out; },
   newChunks(n, theme){ const list=Content.chunkList.filter(c=>!P.cards[c.key]); const same=list.filter(c=>theme&&c.theme===theme); const out=same.slice(0,n); for(const c of list){ if(out.length>=n) break; if(!out.includes(c)) out.push(c); } return out; },
   distractors(key,n){ const w=Content.words[key]; const same=Content.byTheme[w.theme].filter(x=>x.key!==key&&x.ru!==w.ru&&x.en!==w.en); let pool=U.shuffle(same).slice(0,n); if(pool.length<n){ const rest=U.shuffle(Content.wordList.filter(x=>x.theme!==w.theme&&x.ru!==w.ru&&x.en!==w.en)); pool=pool.concat(rest.slice(0,n-pool.length)); } return pool.map(x=>x.key); },
   chunkDistractors(key,n){ return U.pick(Content.chunkList.filter(c=>c.key!==key),n).map(c=>c.key); },
-  wordEx(key,type){
+  HIDE:{easy:0.4,normal:0.5,hard:0.65},
+  wordEx(key,type,lvl){
     const w=Content.words[key]; if(!w) return null;
     switch(type){
       case 'wchoice': return {t:'wchoice',key,dir:U.rnd(['ru2en','ru2en','en2ru']),opts:Planner.distractors(key,3)};
       case 'listen': return {t:'listen',key,opts:Planner.distractors(key,3)};
       case 'say': return {t:'say',ru:w.ru,a:[w.en],key,em:w.em};
-      case 'scramble': if(/\s|-/.test(w.en)||w.en.length<3) return {t:'letters',key}; return {t:'scramble',key};
+      case 'letters': return {t:'letters',key,hide:Planner.HIDE[lvl||'normal']};
+      case 'scramble': if(/\s|-/.test(w.en)||w.en.length<3) return {t:'letters',key,hide:Planner.HIDE[lvl||'normal']}; return {t:'scramble',key};
       default: return {t:type,key};
     }
   },
   chunkEx(key,type){ const c=Content.chunks[key]; switch(type){ case 'cchoice': return {t:'cchoice',key,opts:Planner.chunkDistractors(key,3)}; case 'tr': return {t:'tr',ru:c.ru,a:[c.en],key}; default: return {t:'say',ru:c.ru,a:[c.en],key,em:c.em}; } },
-  itemFor(key){ const s=SRS.stage(key);
-    if(key.startsWith('w:')) return Planner.wordEx(key, s<=1?U.rnd(['wchoice','listen','wchoice']): s===2?U.rnd(['wtype','letters','dict']): U.rnd(['wtype','dict','say','scramble']));
-    return Planner.chunkEx(key, s<=1?'cchoice': s===2?'tr':U.rnd(['tr','say'])); },
+  /* предложение годится для «собери из плиток»: 3–9 слов, без тире и кавычек */
+  sentOkStr(en){ if(!en||/[—–"«»]/.test(en)) return false; const n=en.split(' ').length; return n>=3&&n<=9; },
+  sentOk(w){ return !!w&&Planner.sentOkStr(w.exEn); },
+  CONFUSERS:['is','are','am','do','does','a','an','the','to','in','on','at','was','were','has','have'],
+  confuser(en){ const words=en.toLowerCase().replace(/[.,!?]/g,'').split(' '); const c=U.shuffle(Planner.CONFUSERS).find(x=>!words.includes(x)); return c||'the'; },
+  /* текст предложения в задании (для сверки повторов внутри занятия) */
+  sentKey(it){ if(!it) return null; let t=null; if(it.t==='build') t=it.en; else if(it.t==='tr'||it.t==='say') t=it.a&&it.a[0]; else if(it.t==='err') t=it.a; else if(it.t==='dict') t=it.text; else if(it.t==='shadow') t=it.en; return t?Txt.canon(t):null; },
+  sentBuild(key,lvl){ const w=Content.words[key]; return {t:'build',en:w.exEn,ru:w.exRu,extra:lvl==='hard'?[Planner.confuser(w.exEn)]:[],key}; },
+  /* уровень: ручной из настроек или «авто» по точности последних дней (с запасом, чтобы не скакать туда-сюда) */
+  autoLevel(){ const ks=Object.keys(P.days).sort().slice(-6); let n=0,ok=0; ks.forEach(k=>{ n+=P.days[k].n||0; ok+=P.days[k].ok||0; });
+    const cur=P.autoLvl||'normal'; if(n<25) return cur; const a=ok/n;
+    if(a>=0.88) return 'hard'; if(a<0.62) return 'easy'; if(cur==='hard'&&a>=0.78) return 'hard'; if(cur==='easy'&&a<0.7) return 'easy'; return 'normal'; },
+  level(){ const s=P.settings.level||'auto'; return s==='auto'?Planner.autoLevel():s; },
+  /* какой тип задания дать карточке: по её этапу; на сложном уровне — на ступень выше */
+  itemFor(key,lvl){ lvl=lvl||Planner.level(); const e=Math.min(4,SRS.stage(key)+(lvl==='hard'?1:0));
+    if(key.startsWith('w:')){ const w=Content.words[key]; let types;
+      if(e<=1) types=lvl==='easy'?['wchoice','listen']:['wchoice','listen','wtype'];
+      else if(e===2) types=['wtype','letters','dict'];
+      else types=['wtype','dict','scramble','wtype','dict','say'].concat(Planner.sentOk(w)?['sent']:[]);
+      const t=U.rnd(types); return t==='sent'?Planner.sentBuild(key,lvl):Planner.wordEx(key,t,lvl); }
+    return Planner.chunkEx(key, e<=1?'cchoice': e===2?'tr':U.rnd(['tr','say'])); },
   unitDrills(unit,n,exclude){ const used=exclude||[]; let d=U.shuffle(unit.drills.filter((x,i)=>!used.includes(i)).map(x=>Object.assign({},x,{unit:unit.id}))).slice(0,n);
     const rank={choice:0,gap:1,build:2,err:2,tr:3}; d.sort((a,b)=>rank[a.t]-rank[b.t]); return d; },
-  build(){
-    const sessionsBefore=Object.values(P.days).filter(d=>d.done).length;
-    const blocks=[];
-    /* 1. Повторение */
-    const due=SRS.due('w:').concat(SRS.due('c:')).slice(0,24);
-    let rev=due.map(k=>Planner.itemFor(k)).filter(Boolean);
-    if(rev.length<8){ const extra=U.pick(Planner.knownWords().filter(w=>!due.includes(w.key)),8-rev.length); extra.forEach(w=>rev.push(Planner.itemFor(w.key))); }
-    const readDay = sessionsBefore%3===2;
-    if(rev.length) blocks.push({id:'review',title:'Повторение',icon:'🔁',sec:readDay?240:300,items:U.shuffle(rev),more:'review'});
-    /* 2. Грамматика: новое правило — урок, знакомое — короткое напоминание */
-    const unit=Planner.currentUnit(); const us=P.units[unit.id]; const gi=[];
-    if(!us||!us.seen) gi.push({t:'lesson',unit:unit.id}); else gi.push({t:'recap',unit:unit.id});
-    const drills=Planner.unitDrills(unit,10);
-    if(unit.gen){ const g=Gen.make(unit.gen); if(g) drills.splice(3,0,Object.assign(g,{unit:unit.id})); }
-    gi.push(...drills);
-    Planner.unitsForReview(2,unit.id).forEach((u,i)=>{ const d=Object.assign({},U.rnd(u.drills),{unit:u.id,review:true}); gi.splice(Math.min(gi.length,5+i*4),0,d); });
-    blocks.push({id:'grammar',title:'Грамматика',icon:'🧱',sec:480,items:gi,more:'grammar',unit:unit.id});
-    /* 3. Слова */
-    const theme=Planner.currentTheme(); const nw=Planner.newWords(6); const nc=Planner.newChunks(2, theme?theme.id:null); const vi=[];
-    nw.forEach(w=>vi.push({t:'card',key:w.key}));
-    nw.forEach(w=>vi.push(Planner.wordEx(w.key,'wchoice')));
-    nc.forEach(c=>vi.push({t:'card',key:c.key}));
-    if(nw.length>=4) vi.push({t:'match',keys:nw.slice(0,5).map(w=>w.key)});
-    nc.forEach(c=>vi.push(Planner.chunkEx(c.key,'cchoice')));
-    nw.forEach(w=>vi.push(Planner.wordEx(w.key,'wtype')));
-    U.pick(nw,3).forEach(w=>vi.push(Planner.wordEx(w.key,'listen')));
-    if(!nw.length){ U.pick(Planner.knownWords(),10).forEach(w=>vi.push(Planner.itemFor(w.key))); }
-    blocks.push({id:'vocab',title:theme?theme.title:'Слова',icon:theme?theme.icon:'🗂️',sec:420,items:vi,more:'vocab',theme:theme?theme.id:null});
-    /* 4. Правописание */
-    const known=U.shuffle(Planner.knownWords()); const pool=known.length>=8?known:known.concat(nw); const sp=[];
-    pool.slice(0,3).forEach(w=>sp.push({t:'dict',key:w.key}));
-    pool.slice(3,6).forEach(w=>sp.push({t:'letters',key:w.key}));
-    pool.slice(6,8).forEach(w=>sp.push(Planner.wordEx(w.key,'scramble')));
-    const ex=U.rnd(unit.ex); sp.push({t:'dict',text:ex.en,ru:ex.ru,unit:unit.id});
-    blocks.push({id:'spell',title:'Правописание',icon:'✍️',sec:240,items:U.shuffle(sp),more:'spell'});
-    /* 5. Чтение (каждое третье занятие) */
-    if(readDay){ const tx=TEXTS.slice().sort((a,b)=>((P.read[a.id]||0)-(P.read[b.id]||0)))[0]; blocks.push({id:'read',title:'Чтение',icon:'📖',sec:200,items:[{t:'read',id:tx.id}]}); }
-    /* 6. Говорение */
-    const sk=[]; U.pick(unit.ex,3).forEach(e=>sk.push({t:'shadow',en:e.en,ru:e.ru,unit:unit.id}));
-    const cs=Content.chunkList.filter(c=>P.cards[c.key]); const pickC=cs.length>=2?U.pick(cs,2):U.pick(Content.chunkList,2);
-    pickC.forEach(c=>sk.push({t:'say',ru:c.ru,a:[c.en],key:c.key,em:c.em}));
-    const dlg=DIALOGS[(P.dlgIdx||0)%DIALOGS.length]; P.dlgIdx=(P.dlgIdx||0)+1; sk.push({t:'dialog',id:dlg.id});
-    blocks.push({id:'speak',title:'Говорение',icon:'🎤',sec:300,items:sk,more:'speak'});
-    blocks.forEach(b=>{ b.i=0; b.spent=0; b.done=false; b.n=0; b.ok=0; });
-    return {date:Day.key(),bi:0,blocks,started:Date.now(),finished:false,n:0,ok:0,xp:0,free:false};
+  /* оценка времени */
+  estKey(it){ if(it.t==='dict'&&it.text) return 'dictS'; if(it.t==='say'&&it.a&&it.a[0].split(' ').length>3) return 'sayS'; return it.t; },
+  est(it){ if(!it) return 0; const k=Planner.estKey(it); const base=EST[k]||25; const p=P.pace&&P.pace[k]; return p?Math.max(base*0.5,Math.min(base*2,p)):base; },
+  estSum(items){ return items.reduce((a,it)=>a+Planner.est(it),0); },
+  recordPace(it,sec){ if(!it||!(sec>0)) return; const k=Planner.estKey(it); const base=EST[k]||25; const s=Math.max(base*0.4,Math.min(base*2.5,sec)); P.pace=P.pace||{}; P.pace[k]=P.pace[k]?Math.round((P.pace[k]*0.8+s*0.2)*10)/10:s; },
+  mixAvail(){ const ok=id=>P.units[id]&&(P.units[id].seen||P.units[id].done); const out=[]; if(ok('ps_aff')) out.push('ps'); if(ok('pc')) out.push('pc'); if(ok('past_irr')) out.push('past'); return out.length>=2?out:[]; },
+  /* примеры из правил: сначала текущая тема, потом пройденные */
+  exPool(unit){ const tag=u=>e=>Object.assign({unit:u.id},e); const cur=U.shuffle(unit.ex.map(tag(unit)));
+    const prev=U.shuffle([].concat(...GRAMMAR.filter(u=>u.id!==unit.id&&P.units[u.id]&&P.units[u.id].seen).map(u=>u.ex.map(tag(u)))));
+    return cur.concat(prev).filter(e=>!/—/.test(e.en)); },
+  freshEx(unit,used){ return Planner.exPool(unit).filter(e=>!used.ex.has(Txt.canon(e.en))); },
+  grammarBlock(unit,lvl,budget,used){
+    const us=P.units[unit.id]||{}; const items=[!us.seen?{t:'lesson',unit:unit.id}:{t:'recap',unit:unit.id}];
+    const shown=us.sh||{};
+    let cand=unit.drills.map((d,i)=>Object.assign({},d,{unit:unit.id,di:'d'+i}));
+    const drillSents=new Set(cand.map(Planner.sentKey).filter(Boolean));
+    if(lvl!=='easy') unit.ex.forEach((e,i)=>{ if(Planner.sentOkStr(e.en)&&!drillSents.has(Txt.canon(e.en))&&!used.ex.has(Txt.canon(e.en))) cand.push({t:'build',en:e.en,ru:e.ru,extra:lvl==='hard'?[Planner.confuser(e.en)]:[],unit:unit.id,di:'e'+i,exs:e.en}); });
+    cand=U.shuffle(cand).sort((a,b)=>(shown[a.di]||0)-(shown[b.di]||0));
+    const isNew=items[0].t==='lesson'; const capChoice={easy:99,normal:5,hard:3}[lvl];
+    const reviewN=Math.max(1,({easy:1,normal:2,hard:3})[lvl]-(isNew?1:0));
+    const mixAvail=lvl==='easy'?[]:Planner.mixAvail(), mixN=mixAvail.length?(lvl==='hard'&&!isNew?2:1):0;
+    const reserve=reviewN*30+mixN*25; let sum=Math.min(Planner.est(items[0]),90); const picked=[]; let nChoice=0;
+    for(const c of cand){ if(sum>=budget-reserve) break; const ck=Planner.sentKey(c); if(ck&&used.ex.has(ck)) continue; if(c.t==='choice'){ if(nChoice>=capChoice) continue; nChoice++; } picked.push(c); sum+=Planner.est(c); const sk=Planner.sentKey(c); if(sk) used.ex.add(sk); }
+    const rank={choice:0,gap:1,build:2,err:3,tr:4}; picked.sort((a,b)=>rank[a.t]-rank[b.t]);
+    if(lvl==='easy'&&unit.gen){ const g=Gen.make(unit.gen); if(g) picked.splice(Math.min(2,picked.length),0,Object.assign(g,{unit:unit.id})); }
+    const extra=[]; for(let i=0;i<mixN;i++){ const m=Gen.mix(mixAvail); if(m&&!extra.some(x=>x.q===m.q)) extra.push(m); }
+    const have=new Set(picked.map(x=>x.unit+':'+x.di));
+    const takeFrom=u=>{ let pool=u.drills.map((d,i)=>Object.assign({},d,{unit:u.id,di:'d'+i,review:true})).filter(d=>!have.has(d.unit+':'+d.di));
+      if(lvl==='hard'){ const prod=pool.filter(d=>d.t!=='choice'); if(prod.length) pool=prod; }
+      pool=pool.filter(d=>{ const k=Planner.sentKey(d); return !k||!used.ex.has(k); });
+      const sh=(P.units[u.id]&&P.units[u.id].sh)||{}; pool=U.shuffle(pool).sort((a,b)=>(sh[a.di]||0)-(sh[b.di]||0)); const d=pool[0]; if(d){ have.add(d.unit+':'+d.di); const k=Planner.sentKey(d); if(k) used.ex.add(k); } return d; };
+    Planner.unitsForReview(reviewN,unit.id).forEach(u=>{ const d=takeFrom(u); if(d) extra.push(d); });
+    U.shuffle(extra).forEach((x,i,arr)=>{ const pos=Math.min(picked.length,Math.round((i+1)*picked.length/(arr.length+1))+1); picked.splice(pos,0,x); });
+    items.push(...picked); sum=Planner.estSum(items)-Math.max(0,Planner.est(items[0])-90);
+    /* своя тема закончилась, а время есть — добираем из других пройденных тем (это другой материал, не повтор) */
+    const others=Planner.unitsForReview(12,unit.id); let oi=0, guard=0;
+    while(sum<budget-20&&others.length&&guard<20){ guard++; const d=takeFrom(others[oi%others.length]); oi++; if(d){ items.push(d); sum+=Planner.est(d); } }
+    return items;
   },
-  /* дополнительные задания, когда очередь кончилась, а время осталось */
-  more(block){
-    switch(block.more){
-      case 'review': return U.pick(Planner.knownWords(),3).map(w=>Planner.itemFor(w.key));
-      case 'grammar': { const u=Content.units[block.unit]; const out=[]; if(u.gen){ for(let i=0;i<2;i++){ const g=Gen.make(u.gen); if(g) out.push(Object.assign(g,{unit:u.id})); } } const used=block.items.filter(x=>x.unit===u.id&&!x.gen).map(x=>u.drills.findIndex(d=>d.q===x.q&&d.t===x.t&&d.en===x.en&&d.ru===x.ru)); out.push(...Planner.unitDrills(u,2,used)); return out; }
-      case 'vocab': { const fresh=block.items.filter(x=>x.t==='card'&&x.key.startsWith('w:')).map(x=>x.key); const keys=fresh.length?fresh:Planner.knownWords().slice(0,6).map(w=>w.key); return U.pick(keys,3).map(k=>Planner.wordEx(k,U.rnd(['wtype','listen','wchoice']))); }
-      case 'spell': return U.pick(Planner.knownWords(),3).map(w=>Planner.wordEx(w.key,U.rnd(['letters','dict','scramble'])));
-      case 'speak': { const u=Planner.currentUnit(); return U.pick(u.ex,2).map(e=>({t:'shadow',en:e.en,ru:e.ru,unit:u.id})); }
+  /* сколько новых слов помещается в бюджет блока: от максимума уровня вниз до 3 */
+  vocabFit(lvl,f,used,cut,budget){ const max=Math.max(3,Math.round(({easy:5,normal:6,hard:8})[lvl]*f)-(cut||0));
+    for(let n=max;n>3;n--){ const trial={keys:new Set(used.keys),ex:new Set(used.ex),due:used.due}; if(Planner.estSum(Planner.vocabBlock(lvl,f,trial,n).items)<=budget) return Planner.vocabBlock(lvl,f,used,n); }
+    return Planner.vocabBlock(lvl,f,used,3); },
+  vocabBlock(lvl,f,used,n){
+    const nw=Planner.newWords(n); const themes=[...new Set(nw.map(w=>w.theme))].map(id=>Content.theme(id));
+    const items=[];
+    if(!nw.length){ U.shuffle(Planner.knownWords().filter(w=>!used.keys.has(w.key))).slice(0,10).forEach(w=>{ items.push(Planner.itemFor(w.key,lvl)); used.keys.add(w.key); }); }
+    else {
+      const groups=[]; for(let i=0;i<nw.length;i+=4) groups.push(nw.slice(i,i+4));
+      if(groups.length>1&&groups[groups.length-1].length<3){ const tail=groups.pop(); groups[groups.length-1]=groups[groups.length-1].concat(tail); }
+      groups.forEach(g=>{ g.forEach(w=>items.push({t:'card',key:w.key}));
+        if(lvl==='easy') g.forEach(w=>items.push(Planner.wordEx(w.key,'wchoice',lvl)));
+        if(g.length>=3) items.push({t:'match',keys:g.map(w=>w.key)}); else if(lvl!=='easy') g.forEach(w=>items.push(Planner.wordEx(w.key,'wchoice',lvl))); });
+      const prod=lvl==='easy'?['wtype']:lvl==='normal'?['wtype','dict']:['wtype','dict','letters'];
+      U.shuffle(nw).forEach((w,i)=>items.push(Planner.wordEx(w.key,prod[i%prod.length],lvl)));
+      if(lvl!=='easy') U.pick(nw.filter(w=>Planner.sentOk(w)&&!used.ex.has(Txt.canon(w.exEn))),lvl==='hard'?2:1).forEach(w=>{ items.push(Planner.sentBuild(w.key,lvl)); used.ex.add(Txt.canon(w.exEn)); });
+      nw.forEach(w=>used.keys.add(w.key));
     }
-    return [];
+    /* фразы выбираем после слов: предложение-пример к слову и новая фраза не должны совпадать */
+    const nc=Planner.newChunks(6, themes[0]?themes[0].id:null).filter(c=>!used.ex.has(Txt.canon(c.en))).slice(0,f>=0.6?2:1);
+    nc.forEach(c=>items.push({t:'card',key:c.key})); nc.forEach(c=>{ items.push(Planner.chunkEx(c.key,lvl==='hard'?'tr':'cchoice')); used.keys.add(c.key); used.ex.add(Txt.canon(c.en)); });
+    const title=themes.length?themes.slice(0,2).map(t=>t.title).join(' · '):'Слова';
+    return {id:'vocab',title,icon:themes[0]?themes[0].icon:'🗂️',items,theme:themes[0]?themes[0].id:null,newW:nw.length,newC:nc.length};
+  },
+  spellBlock(lvl,f,used,unit,readDay){
+    const known=Content.wordList.filter(w=>P.cards[w.key]&&P.cards[w.key].s>=1&&!used.keys.has(w.key)&&!used.due.has(w.key));
+    const pool=U.shuffle(known);
+    let plan=lvl==='easy'?['letters','letters','scramble','scramble','dict','dict','S']:lvl==='normal'?['dict','dict','dict','letters','letters','scramble','S']:['dict','dict','dict','letters','letters','letters','S','S'];
+    plan=plan.slice(0,Math.max(3,Math.round(plan.length*f)-(readDay?2:0)));
+    const exs=Planner.freshEx(unit,used); const items=[]; let wi=0;
+    const sent=()=>{ const e=exs.shift(); if(e){ items.push({t:'dict',text:e.en,ru:e.ru,unit:e.unit}); used.ex.add(Txt.canon(e.en)); } };
+    /* знакомых слов не хватает (первые дни) — вместо слов диктуем предложения, а не повторяем сегодняшние новые слова */
+    for(const p of plan){ if(p==='S'){ sent(); continue; } const w=pool[wi++]; if(!w){ if(p==='dict') sent(); continue; }
+      items.push(p==='dict'?{t:'dict',key:w.key}:Planner.wordEx(w.key,p,lvl)); used.keys.add(w.key); }
+    return items.length?{id:'spell',title:'Правописание',icon:'✍️',items:U.shuffle(items)}:null;
+  },
+  speakBlock(lvl,f,used,unit,withDialog){
+    const items=[]; const exs=Planner.freshEx(unit,used);
+    const nShadow=({easy:3,normal:2,hard:1})[lvl]+(withDialog||lvl!=='easy'?0:1), nSay=({easy:0,normal:1,hard:2})[lvl]+(withDialog||lvl==='easy'?0:1);
+    for(let i=0;i<nShadow;i++){ const e=exs.shift(); if(e){ items.push({t:'shadow',en:e.en,ru:e.ru,unit:e.unit}); used.ex.add(Txt.canon(e.en)); } }
+    for(let i=0;i<nSay;i++){ const e=exs.shift(); if(e){ items.push({t:'say',ru:e.ru,a:[e.en],unit:e.unit}); used.ex.add(Txt.canon(e.en)); } }
+    const okC=c=>!used.keys.has(c.key)&&!used.ex.has(Txt.canon(c.en));
+    let cs=U.shuffle(Content.chunkList.filter(c=>P.cards[c.key]&&okC(c))); if(cs.length<2) cs=cs.concat(U.shuffle(Content.chunkList.filter(c=>!P.cards[c.key]&&okC(c))));
+    cs.slice(0,2).forEach(c=>{ items.push({t:'say',ru:c.ru,a:[c.en],key:c.key,em:c.em}); used.keys.add(c.key); used.ex.add(Txt.canon(c.en)); });
+    let dialog=null; if(withDialog){ dialog=DIALOGS[(P.dlgIdx||0)%DIALOGS.length]; items.push({t:'dialog',id:dialog.id}); }
+    return {id:'speak',title:'Говорение',icon:'🎤',items,dialog:dialog?dialog.title:null};
+  },
+  build(){
+    const lvl=Planner.level(); if((P.settings.level||'auto')==='auto') P.autoLvl=lvl;
+    const f=(P.settings.goal||30)/30, target=(P.settings.goal||30)*60;
+    const sessionsBefore=Object.values(P.days).filter(d=>d.done).length; const readDay=sessionsBefore%3===2;
+    const due=SRS.due('w:').concat(SRS.due('c:')); const hasKnown=Object.keys(P.cards).some(k=>P.cards[k].s>=1);
+    /* повторению — время по числу карточек, которые пора вспомнить (от 2,5 до 8 мин);
+       если долг по повторению большой, новых слов сегодня меньше — иначе старые забудутся */
+    const R=hasKnown?Math.max(150*f,Math.min(480*f,due.length*22)):0;
+    const cut=Math.max(0,Math.ceil((due.length-25)/10));
+    const unit=Planner.currentUnit();
+    const make=gBudget=>{ const used={keys:new Set(),ex:new Set(),due:new Set(due)};
+      const g={id:'grammar',title:'Грамматика',icon:'🧱',unit:unit.id,items:Planner.grammarBlock(unit,lvl,gBudget,used)};
+      const v=Planner.vocabFit(lvl,f,used,cut,420*f);
+      const sp=Planner.spellBlock(lvl,f,used,unit,readDay);
+      let rd=null; if(readDay){ const tx=TEXTS.slice().sort((a,b)=>((P.read[a.id]||0)-(P.read[b.id]||0)))[0]; rd={id:'read',title:'Чтение: '+tx.title,icon:'📖',items:[{t:'read',id:tx.id}]}; }
+      const sk=Planner.speakBlock(lvl,f,used,unit,f>=0.6&&sessionsBefore%2===0);
+      return {used,g,v,sp,rd,sk}; };
+    /* два прохода: первый меряет блоки слов, письма и речи, второй отдаёт грамматике остаток времени */
+    let parts=make(540*f);
+    const fixed=[parts.v,parts.sp,parts.rd,parts.sk].filter(Boolean).reduce((a,b)=>a+Planner.estSum(b.items),0);
+    parts=make(Math.round(Math.max(300*f,Math.min(600*f,target-R-fixed))));
+    const {used,g,v,sp,rd,sk}=parts; const others=[g,v,sp,rd,sk].filter(Boolean);
+    const lessonExtra=g.items[0]&&g.items[0].t==='lesson'?Math.max(0,Planner.est(g.items[0])-90):0;
+    const rest=target-others.reduce((a,b)=>a+Planner.estSum(b.items),0)+lessonExtra;
+    const budget=hasKnown?Math.max(R,Math.min(480*f,rest)):0; const rv=[]; let sum=0;
+    const revItem=k=>{ let it=Planner.itemFor(k,lvl); if(!it) return null; const sk1=Planner.sentKey(it); if(sk1&&used.ex.has(sk1)) it=k.startsWith('w:')?Planner.wordEx(k,'wtype',lvl):Planner.chunkEx(k,'cchoice'); const sk2=Planner.sentKey(it); if(sk2) used.ex.add(sk2); return it; };
+    for(const k of used.due){ if(sum>=budget) break; if(used.keys.has(k)) continue; const it=revItem(k); if(!it) continue; rv.push(it); used.keys.add(k); sum+=Planner.est(it); }
+    /* то, что пора повторить, закончилось — освежаем давно не встречавшиеся слова */
+    const warm=Content.wordList.filter(w=>P.cards[w.key]&&P.cards[w.key].s>=1&&!used.keys.has(w.key)).sort((a,b)=>(P.cards[a.key].last||0)-(P.cards[b.key].last||0));
+    for(const w of warm){ if(sum>=budget) break; const it=revItem(w.key); if(!it) continue; rv.push(it); used.keys.add(w.key); sum+=Planner.est(it); }
+    const blocks=[]; if(rv.length) blocks.push({id:'review',title:'Повторение',icon:'🔁',items:U.shuffle(rv)}); blocks.push(...others);
+    blocks.forEach(b=>{ b.items=b.items.filter(Boolean); b.i=0; b.spent=0; b.done=false; b.n=0; b.ok=0; b.rq=0; });
+    const est=blocks.reduce((a,b)=>a+Planner.estSum(b.items),0);
+    return {v:2,date:Day.key(),bi:0,blocks,created:Date.now(),finished:false,n:0,ok:0,xp:0,free:false,lvl,est,due:due.length};
   },
   /* свободные блоки для раздела «Практика» */
   freeBlock(kind, arg){
+    const lvl=Planner.level();
     switch(kind){
-      case 'unit': { const u=Content.units[arg]; const items=Planner.unitDrills(u,12); if(u.gen){ for(let i=0;i<3;i++){ const g=Gen.make(u.gen); if(g) items.splice(2+i*3,0,Object.assign(g,{unit:u.id})); } } return {id:'grammar',title:u.title,icon:u.icon,sec:600,items,more:'grammar',unit:u.id}; }
-      case 'theme': { const t=Content.theme(arg); const ws=Content.byTheme[t.id]; const fresh=ws.filter(w=>!P.cards[w.key]).slice(0,6); const items=[]; fresh.forEach(w=>items.push({t:'card',key:w.key})); fresh.forEach(w=>items.push(Planner.wordEx(w.key,'wchoice'))); if(fresh.length>=4) items.push({t:'match',keys:fresh.slice(0,5).map(w=>w.key)}); fresh.forEach(w=>items.push(Planner.wordEx(w.key,'wtype')));
-        const known=U.pick(ws.filter(w=>P.cards[w.key]&&!fresh.includes(w)),fresh.length?4:10); known.forEach(w=>items.push(Planner.itemFor(w.key))); return {id:'vocab',title:t.title,icon:t.icon,sec:600,items,more:'vocab',theme:t.id}; }
-      case 'phrases': { const fresh=Planner.newChunks(4,null); const items=[]; fresh.forEach(c=>items.push({t:'card',key:c.key})); fresh.forEach(c=>items.push(Planner.chunkEx(c.key,'cchoice'))); fresh.forEach(c=>items.push(Planner.chunkEx(c.key,'tr'))); const known=U.pick(Content.chunkList.filter(c=>P.cards[c.key]&&!fresh.includes(c)),4); known.forEach(c=>items.push(Planner.itemFor(c.key))); return {id:'vocab',title:'Фразы',icon:'💬',sec:480,items}; }
-      case 'spell': { const known=U.shuffle(Planner.knownWords()); const pool=known.length>=10?known:known.concat(U.pick(Content.wordList,10)); const items=[]; pool.slice(0,4).forEach(w=>items.push({t:'dict',key:w.key})); pool.slice(4,8).forEach(w=>items.push({t:'letters',key:w.key})); pool.slice(8,11).forEach(w=>items.push(Planner.wordEx(w.key,'scramble'))); const u=Planner.currentUnit(); U.pick(u.ex,2).forEach(e=>items.push({t:'dict',text:e.en,ru:e.ru,unit:u.id})); return {id:'spell',title:'Правописание',icon:'✍️',sec:420,items:U.shuffle(items),more:'spell'}; }
-      case 'speak': { const u=Planner.currentUnit(); const items=[]; U.pick(u.ex,4).forEach(e=>items.push({t:'shadow',en:e.en,ru:e.ru,unit:u.id})); const cs=Content.chunkList.filter(c=>P.cards[c.key]); (cs.length>=3?U.pick(cs,3):U.pick(Content.chunkList,3)).forEach(c=>items.push({t:'say',ru:c.ru,a:[c.en],key:c.key,em:c.em})); return {id:'speak',title:'Говорение',icon:'🎤',sec:420,items,more:'speak'}; }
-      case 'dialog': return {id:'speak',title:DIALOGS.find(d=>d.id===arg).title,icon:'🗣️',sec:600,items:[{t:'dialog',id:arg}]};
-      case 'text': return {id:'read',title:TEXTS.find(t=>t.id===arg).title,icon:'📖',sec:600,items:[{t:'read',id:arg}]};
-      case 'placement': { const items=[]; GRAMMAR.forEach((u,i)=>{ if(i%2===0&&i<30){ const d=U.rnd(u.drills.filter(x=>x.t==='choice')); if(d) items.push(Object.assign({},d,{unit:u.id,placement:true})); } }); return {id:'test',title:'Мини-тест',icon:'🧪',sec:900,items,noRequeue:true}; }
+      case 'unit': { const u=Content.units[arg]; const items=Planner.unitDrills(u,12); if(u.gen){ for(let i=0;i<2;i++){ const g=Gen.make(u.gen); if(g) items.splice(2+i*4,0,Object.assign(g,{unit:u.id})); } } return {id:'grammar',title:u.title,icon:u.icon,items,unit:u.id}; }
+      case 'theme': { const t=Content.theme(arg); const ws=Content.byTheme[t.id]; const fresh=ws.filter(w=>!P.cards[w.key]).slice(0,6); const items=[]; fresh.forEach(w=>items.push({t:'card',key:w.key})); if(fresh.length>=3) items.push({t:'match',keys:fresh.map(w=>w.key)}); else fresh.forEach(w=>items.push(Planner.wordEx(w.key,'wchoice',lvl))); fresh.forEach(w=>items.push(Planner.wordEx(w.key,'wtype',lvl)));
+        const known=U.pick(ws.filter(w=>P.cards[w.key]&&!fresh.includes(w)),fresh.length?4:10); known.forEach(w=>items.push(Planner.itemFor(w.key,lvl))); return {id:'vocab',title:t.title,icon:t.icon,items,theme:t.id}; }
+      case 'phrases': { const fresh=Planner.newChunks(4,null); const items=[]; fresh.forEach(c=>items.push({t:'card',key:c.key})); fresh.forEach(c=>items.push(Planner.chunkEx(c.key,lvl==='hard'?'tr':'cchoice'))); const known=U.pick(Content.chunkList.filter(c=>P.cards[c.key]&&!fresh.includes(c)),4); known.forEach(c=>items.push(Planner.itemFor(c.key,lvl))); return {id:'vocab',title:'Фразы',icon:'💬',items}; }
+      case 'spell': { const known=U.shuffle(Planner.knownWords()); const pool=known.length>=10?known:known.concat(U.pick(Content.wordList,10)); const items=[]; pool.slice(0,4).forEach(w=>items.push({t:'dict',key:w.key})); pool.slice(4,8).forEach(w=>items.push(Planner.wordEx(w.key,'letters',lvl))); pool.slice(8,11).forEach(w=>items.push(Planner.wordEx(w.key,'scramble',lvl))); U.pick(Planner.exPool(Planner.currentUnit()),2).forEach(e=>items.push({t:'dict',text:e.en,ru:e.ru,unit:e.unit})); return {id:'spell',title:'Правописание',icon:'✍️',items:U.shuffle(items)}; }
+      case 'speak': { const exs=Planner.exPool(Planner.currentUnit()); const items=[]; exs.slice(0,2).forEach(e=>items.push({t:'shadow',en:e.en,ru:e.ru,unit:e.unit})); exs.slice(2,4).forEach(e=>items.push({t:'say',ru:e.ru,a:[e.en],unit:e.unit})); const cs=Content.chunkList.filter(c=>P.cards[c.key]); (cs.length>=3?U.pick(cs,3):U.pick(Content.chunkList,3)).forEach(c=>items.push({t:'say',ru:c.ru,a:[c.en],key:c.key,em:c.em})); return {id:'speak',title:'Говорение',icon:'🎤',items}; }
+      case 'dialog': return {id:'speak',title:DIALOGS.find(d=>d.id===arg).title,icon:'🗣️',items:[{t:'dialog',id:arg}]};
+      case 'text': return {id:'read',title:TEXTS.find(t=>t.id===arg).title,icon:'📖',items:[{t:'read',id:arg}]};
+      case 'placement': { const items=[]; GRAMMAR.forEach((u,i)=>{ if(i%2===0&&i<30){ const d=U.rnd(u.drills.filter(x=>x.t==='choice')); if(d) items.push(Object.assign({},d,{unit:u.id,placement:true})); } }); return {id:'test',title:'Мини-тест',icon:'🧪',items,noRequeue:true}; }
     }
     return null;
   }

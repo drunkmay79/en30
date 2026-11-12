@@ -198,7 +198,7 @@ Ex.types.dict=function(it,w,ctx){ const o=it.key?Content.get(it.key):null; const
   w.appendChild(U.h('div',{class:'actions'},U.h('button',{class:'btn pri big',type:'button',onclick:check},'Проверить'))); Ex.focus(inp); };
 
 Ex.types.letters=function(it,w,ctx){ const o=Content.get(it.key); let done=false; const en=o.en;
-  const chars=en.split(''); const idx=[]; chars.forEach((c,i)=>{ if(/[a-z]/i.test(c)&&i>0&&c!==' ') idx.push(i); }); const hideN=Math.max(1,Math.round(idx.length*0.45)); const hide=new Set(U.pick(idx,hideN));
+  const chars=en.split(''); const idx=[]; chars.forEach((c,i)=>{ if(/[a-z]/i.test(c)&&i>0&&c!==' ') idx.push(i); }); const hideN=Math.max(1,Math.min(idx.length,Math.round(idx.length*(it.hide||0.45)))); const hide=new Set(U.pick(idx,hideN));
   const masked=chars.map((c,i)=>hide.has(i)?'_':c).join(''); w.appendChild(Ex.wordHead(o,{ru:true}));
   w.appendChild(U.h('div',{class:'q center',style:'letter-spacing:.25em;font-family:ui-monospace,Consolas,monospace'},masked));
   const inp=Ex.input({ph:'Напиши слово целиком'}); w.appendChild(inp);
